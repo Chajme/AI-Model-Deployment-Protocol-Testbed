@@ -1,0 +1,172 @@
+services:
+
+#  # ========================
+#  # MQTT
+#  # ========================
+  mosquitto-broker:
+    profiles: ["mqtt"]
+    image: eclipse-mosquitto:latest
+    # No host port binding -- benchmark runs inside the internal mqtt-net.
+    networks:
+      - mqtt-net
+    volumes:
+      - ./protocols/MQTT/mosquitto-broker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+  # Sender -- tc applied at startup, then stays idle so the test harness can
+  # drive one transfer at a time (per file / QoS) with per-run pcap capture.
+  mqtt-client-a:
+    profiles: ["mqtt"]
+    build: ./
+    cap_add:
+      - NET_ADMIN
+    command: [ "/app/scripts/network_chaos.sh" ]
+    depends_on:
+      - mosquitto-broker
+    volumes:
+      - ./output:/app/output
+      - ./:/app
+      - ./data:/app/data
+    networks:
+      - mqtt-net
+    environment:
+      - NETWORK_PROFILE=${NETWORK_PROFILE}
+      - MEASUREMENT_SUFFIX=${MEASUREMENT_SUFFIX}
+
+  # Receiver -- stays up and waits for published chunks from client A.
+  mqtt-client-b:
+    profiles: ["mqtt"]
+    build: ./
+    cap_add:
+      - NET_ADMIN
+    command: [ "/app/scripts/network_chaos.sh" ]
+    depends_on:
+      - mosquitto-broker
+    volumes:
+      - ./output:/app/output
+      - ./:/app
+    networks:
+      - mqtt-net
+    environment:
+      - APP_COMMAND=python -m protocols.MQTT.clients.client_b
+      - NETWORK_PROFILE=${NETWORK_PROFILE}
+      - MEASUREMENT_SUFFIX=${MEASUREMENT_SUFFIX}
+
+  mqtt-capture:
+    profiles: ["mqtt"]
+    image: nicolaka/netshoot
+    depends_on:
+      - mosquitto-broker
+    network_mode: "service:mosquitto-broker"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ./output/pcap:/pcap
+    entrypoint: [ "sleep", "infinity" ]
+
+  # ========================
+  # HTTP
+  # ========================
+  http-server:
+    profiles: ["http"]
+    build: .
+    cap_add:
+      - NET_ADMIN                          # needed for tc on server too
+    command: [ "/app/scripts/network_chaos.sh" ]
+    volumes:
+      - ./uploads:/var/www/uploads/upload
+      - ./output:/app/output
+      - ./:/app
+    networks:
+      - http-net
+    environment:
+      - APP_COMMAND=python -m protocols.HTTP.server.flask_server
+
+  # Client -- tc applied at startup, then stays idle (see mqtt-client-a).
+  http-client:
+    profiles: ["http"]
+    build: .
+    cap_add:
+      - NET_ADMIN
+    command: [ "/app/scripts/network_chaos.sh" ]
+    depends_on:
+      - http-server
+    volumes:
+      - ./output:/app/output
+      - ./:/app
+      - ./data:/app/data
+    networks:
+      - http-net
+    environment:
+      - NETWORK_PROFILE=${NETWORK_PROFILE}
+      - MEASUREMENT_SUFFIX=${MEASUREMENT_SUFFIX}
+
+  http-capture:
+    profiles: ["http"]
+    image: nicolaka/netshoot
+    depends_on:
+      - http-server
+    network_mode: "service:http-server"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ./output/pcap:/pcap
+    entrypoint: [ "sleep", "infinity" ]
+
+#  # ========================
+#  # CoAP
+#  # ========================
+  coap-server:
+    profiles: ["coap"]
+    build: .
+    cap_add:
+      - NET_ADMIN
+    command: [ "/app/scripts/network_chaos.sh" ]
+    volumes:
+      - ./output:/app/output
+      - ./:/app
+    networks:
+      - coap-net
+    environment:
+      - APP_COMMAND=python -m protocols.CoAP.server.coap_server
+
+  # Client -- tc applied at startup, then stays idle (see mqtt-client-a).
+  coap-client:
+    profiles: ["coap"]
+    build: .
+    cap_add:
+      - NET_ADMIN
+    command: [ "/app/scripts/network_chaos.sh" ]
+    depends_on:
+      - coap-server
+    volumes:
+      - ./output:/app/output
+      - ./:/app
+      - ./data:/app/data
+    networks:
+      - coap-net
+    environment:
+      - NETWORK_PROFILE=${NETWORK_PROFILE}
+      - MEASUREMENT_SUFFIX=${MEASUREMENT_SUFFIX}
+
+  coap-capture:
+    profiles: ["coap"]
+    image: nicolaka/netshoot
+    depends_on:
+      - coap-server
+    network_mode: "service:coap-server"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ./output/pcap:/pcap
+    entrypoint: [ "sleep", "infinity" ]
+
+networks:
+  mqtt-net:
+    driver: bridge
+  coap-net:
+    driver: bridge
+  http-net:
+    driver: bridge

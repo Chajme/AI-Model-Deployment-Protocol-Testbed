@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# IDE
+.idea/
+
+# Generated benchmark artifacts
+output/pcap/
+output/charts/
+output/*.csv
+output/*.bin
+data/*.bin
+uploads/

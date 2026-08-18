@@ -1,0 +1,156 @@
+services:
+
+#  # ========================
+#  # MQTT
+#  # ========================
+  mosquitto-broker:
+    image: eclipse-mosquitto:latest
+    # No host port binding: the benchmark runs inside the internal mqtt-net,
+    # so publishing 1883 to the host only causes conflicts with other stacks.
+    networks:
+      - mqtt-net
+    volumes:
+      - ./protocols/MQTT/mosquitto-broker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+  mqtt-client-a:
+    build: ./
+    cap_add:
+      - NET_ADMIN
+    entrypoint: ["sleep", "infinity"]
+    depends_on:
+      - mosquitto-broker
+    volumes:
+      - ./output:/app/output
+      - ./:/app
+      - ./data:/app/data
+    networks:
+      - mqtt-net
+    environment:
+      - MEASUREMENT_SUFFIX=_testing
+
+  # Receiver: stays up and waits for published chunks from client A.
+  mqtt-client-b:
+    build: ./
+    cap_add:
+      - NET_ADMIN
+    command: python -m protocols.MQTT.clients.client_b
+    depends_on:
+      - mosquitto-broker
+    volumes:
+      - ./output:/app/output
+      - ./:/app
+    networks:
+      - mqtt-net
+    environment:
+      - MEASUREMENT_SUFFIX=_testing
+
+  mqtt-capture:
+    image: nicolaka/netshoot   # small image with tcpdump preinstalled
+    depends_on:
+      - mosquitto-broker
+    network_mode: "service:mosquitto-broker"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ./output/pcap:/pcap
+    # Stays alive but idle -- tcpdump is started/stopped per transfer via
+    # `docker compose exec {protocol}-capture tcpdump ...` from the test harness,
+    # so each run gets its own pcap file instead of one long capture.
+    entrypoint: [ "sleep", "infinity" ]
+
+  # ========================
+  # HTTP
+  # ========================
+  http-server:
+    build: .
+    cap_add:
+      - NET_ADMIN
+    command: python -m protocols.HTTP.server.flask_server
+    volumes:
+      - ./uploads:/var/www/uploads/upload
+      - ./output:/app/output
+      - ./:/app
+    networks:
+      - http-net
+
+  # Idle -- transfers are driven per file by the test harness (benchmark_manager.py),
+  # mirroring mqtt-client-a.
+  http-client:
+    build: .
+    cap_add:
+      - NET_ADMIN
+    entrypoint: ["sleep", "infinity"]
+    depends_on:
+      - http-server
+    volumes:
+      - ./output:/app/output
+      - ./:/app
+      - ./data:/app/data
+    networks:
+      - http-net
+    environment:
+      - MEASUREMENT_SUFFIX=_testing
+
+  http-capture:
+    image: nicolaka/netshoot
+    depends_on:
+      - http-server
+    network_mode: "service:http-server"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ./output/pcap:/pcap
+    entrypoint: [ "sleep", "infinity" ]
+
+  # ========================
+  # CoAP
+  # ========================
+  coap-server:
+    build: .
+    cap_add:
+      - NET_ADMIN
+    command: python -m protocols.CoAP.server.coap_server
+    volumes:
+      - ./output:/app/output
+      - ./:/app
+    networks:
+      - coap-net
+
+  # Idle -- transfers are driven per file by the test harness, mirroring mqtt-client-a.
+  coap-client:
+    build: .
+    cap_add:
+      - NET_ADMIN
+    entrypoint: ["sleep", "infinity"]
+    depends_on:
+      - coap-server
+    volumes:
+      - ./output:/app/output
+      - ./:/app
+      - ./data:/app/data
+    networks:
+      - coap-net
+    environment:
+      - MEASUREMENT_SUFFIX=_testing
+
+  coap-capture:
+    image: nicolaka/netshoot
+    depends_on:
+      - coap-server
+    network_mode: "service:coap-server"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ./output/pcap:/pcap
+    entrypoint: [ "sleep", "infinity" ]
+
+networks:
+  mqtt-net:
+    driver: bridge
+  coap-net:
+    driver: bridge
+  http-net:
+    driver: bridge

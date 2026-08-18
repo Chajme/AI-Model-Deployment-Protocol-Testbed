@@ -1,0 +1,136 @@
+services:
+
+#  # ========================
+#  # MQTT
+#  # ========================
+#  mosquitto-broker:
+#    image: eclipse-mosquitto:latest
+#    ports:
+#      - "1883:1883"
+#    networks:
+#      - mqtt-net
+#    volumes:
+#      - ./protocols/MQTT/mosquitto.conf:/mosquitto-broker/mosquitto.conf
+#
+#  mqtt-client-a:
+#    build: ./
+##    command: python -m protocols.MQTT.clients.client_a
+#    cap_add:
+#      - NET_ADMIN
+#    command: [ "/app/scripts/network_chaos.sh" ]
+#    depends_on:
+#      - mosquitto-broker
+#    volumes:
+#      - ./output:/app/output
+#      - ./:/app
+#    networks:
+#      - mqtt-net
+#    environment:
+#      - APP_COMMAND=python -m protocols.MQTT.clients.client_a
+#      - NETWORK_PROFILE=iot   # or good/harsh/mobile/satellite
+#      - MEASUREMENT_SUFFIX=_chaos_iot_1024kb
+#
+#  mqtt-client-b:
+#    build: ./
+#    cap_add:
+#      - NET_ADMIN
+#    command: [ "/app/scripts/network_chaos.sh" ]
+##    command: python -m protocols.MQTT.clients.client_b
+#    depends_on:
+#      - mosquitto-broker
+#    volumes:
+#      - ./output:/app/output
+#      - ./:/app
+#    networks:
+#      - mqtt-net
+#    environment:
+#      - APP_COMMAND=python -m protocols.MQTT.clients.client_b
+#      - NETWORK_PROFILE=iot
+#      - MEASUREMENT_SUFFIX=_chaos_iot_1024kb
+
+  # ========================
+  # HTTP
+  # ========================
+  http-server:
+#    image: nginx:alpine
+    build: .
+    cap_add:
+      - NET_ADMIN                          # needed for tc on server too
+    command: [ "/app/scripts/network_chaos.sh" ]
+#    command: python -m protocols.HTTP.server.flask_server
+    ports:
+      - "8080:8000"
+    volumes:
+#      - ./protocols/HTTP/server/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./uploads:/var/www/uploads/upload
+      - ./:/app
+    networks:
+      - http-net
+    environment:
+      - APP_COMMAND=python -m protocols.HTTP.server.flask_server
+      - NETWORK_PROFILE=harsh
+
+  http-client:
+    build: .
+    cap_add:
+      - NET_ADMIN
+#    command: python -m protocols.HTTP.client.http_client
+    command: ["/app/scripts/network_chaos.sh"]
+    depends_on:
+      - http-server
+    volumes:
+      - ./output:/app/output
+      - ./:/app
+    networks:
+      - http-net
+    environment:
+      - NETWORK_PROFILE=harsh
+      - MEASUREMENT_SUFFIX=_testing
+      - APP_COMMAND=python -m protocols.HTTP.client.http_client
+
+#  # ========================
+#  # CoAP
+#  # ========================
+#  coap-server:
+#    build: .
+#    cap_add:
+#      - NET_ADMIN
+#    command: [ "/app/scripts/network_chaos.sh" ]
+##    command: python -m protocols.CoAP.server.coap_server
+#    ports:
+#      - "5683:5683/udp"
+#    volumes:
+#      - ./output:/app/output
+#      - ./:/app
+#    networks:
+#      - coap-net
+#    environment:
+#      - MEASUREMENT_SUFFIX=_testing
+#      - APP_COMMAND=python -m protocols.CoAP.server.coap_server
+#      - NETWORK_PROFILE=iot
+#
+#  coap-client:
+#    build: .
+##    command: python -m protocols.CoAP.client.coap_client
+#    cap_add:
+#      - NET_ADMIN
+#    command: [ "/app/scripts/network_chaos.sh" ]
+#    depends_on:
+#      - coap-server
+#    volumes:
+#      - ./:/app
+#      - ./output:/app/output
+#    networks:
+#      - coap-net
+#    environment:
+#      - MEASUREMENT_SUFFIX=_testing
+#      - APP_COMMAND=python -m protocols.CoAP.client.coap_client
+#      - NETWORK_PROFILE=iot
+#
+networks:
+  mqtt-net:
+    driver: bridge
+  coap-net:
+    driver: bridge
+  http-net:
+    driver: bridge
