@@ -286,6 +286,9 @@ The full symptom → fix table lives in **TUTORIAL.md §8**. Common items:
 
 ## Documentation
 
+- **docs/** — code-level deep dive: [index](docs/README.md) → architecture,
+  measurement pipeline, per-protocol transfer internals, pcap analysis,
+  metrics/CSV schemas, network chaos, charts, CLI reference, troubleshooting.
 - **TUTORIAL.md** — step-by-step end-to-end guide: setup, manual benchmark,
   automated chaos sweep, charts, cross-machine comparability, troubleshooting,
   and a hands-free checklist.
