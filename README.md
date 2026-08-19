@@ -2,7 +2,8 @@
 
 A **reproducible, containerized benchmark harness** that compares how three IoT
 protocols — **MQTT**, **HTTP**, and **CoAP** — move AI-model-sized binary files
-(250 KB up to 200 MB) over a network. It measures each transfer **twice**:
+(250 KB up to 200 MB; generate the payloads with `data/binary_file_generator.py`,
+whose sizes are editable at the bottom) over a network. It measures each transfer **twice**:
 
 - **client side** — runtime metrics collected inside the sender (goodput,
   transfer time, latency, CPU, RAM, energy estimate, integrity),
@@ -94,7 +95,7 @@ protocols/                     per-protocol containers and the orchestration ent
   MQTT/clients/client_b.py     receiver (reassembles chunks, verifies checksum)
   MQTT/mosquitto-broker/       broker config
   HTTP/client/http_client.py   streaming PUT client (TCP RTT, TTFB, server-side checksum)
-  HTTP/server/                 Flask upload server (+ legacy nginx.conf WebDAV variant)
+  HTTP/server/flask_server.py  Flask upload server (+ legacy nginx.conf WebDAV variant)
   CoAP/client/coap_client.py   blockwise PUT client (aiocoap)
   CoAP/server/coap_server.py   blockwise upload resource
 scripts/network_chaos.sh       tc netem + tbf profile applicator (entrypoint for chaos images)
