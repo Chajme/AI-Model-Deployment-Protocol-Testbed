@@ -12,15 +12,18 @@
       - --chart-type line|bar overrides the per-metric auto choice.
 
     Selection:
-      --protocols / --qos / --mqtt-side / --file-sizes / --metrics / --suffix
-      narrow down which runs and metrics are charted.
+      --run <id> selects one run directory (output/runs/<id>/) and charts its
+      data. Alternatively --csv-dir/--suffix select the legacy flat layout.
+      --protocols / --qos / --mqtt-side / --file-sizes / --metrics narrow down
+      which metrics are charted.
 
     Requires matplotlib (optional dependency):
         pip install -r requirements-charts.txt
 
     Usage (run from the project root):
         python common/charts.py
-        python common/charts.py --suffix _testing
+        python common/charts.py --run 20260818T201455_mqtt_harsh
+        python common/charts.py --runs-dir output --run 20260818T201455_mqtt_harsh
         python common/charts.py --protocols http mqtt
         python common/charts.py --metrics goodput_mbps overhead_percentage
         python common/charts.py --file-sizes 1 5 20 50
@@ -46,6 +49,13 @@ except ImportError:
         "matplotlib is not installed.\n"
         "Run: pip install -r requirements-charts.txt"
     )
+
+# Project root is not on sys.path when running `python common/charts.py`.
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
+import common.runs as runs
 
 
 PROTOCOLS = ["http", "mqtt", "coap"]
@@ -138,6 +148,12 @@ def _resolve_file(csv_dir, base, suffix_candidates):
         if os.path.isfile(path):
             return path
     return None
+
+
+def _run_file(csv_dir, base):
+    """Exact filename inside a run directory (no suffix guessing)."""
+    path = os.path.join(csv_dir, f"{base}_measurements.csv")
+    return path if os.path.isfile(path) else None
 
 
 def _client_label(row, protocol):
@@ -402,14 +418,22 @@ def _parse_figsize(value):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--run", default=None,
+                        help="Run id under --runs-dir to chart (preferred). "
+                             "Overrides --csv-dir/--suffix.")
+    parser.add_argument("--runs-dir", default=DEFAULT_CSV_DIR,
+                        help="Directory containing the runs/ tree, i.e. the OUTPUT_DIR "
+                             "parent (default: ./output).")
     parser.add_argument("--csv-dir", default=DEFAULT_CSV_DIR,
-                        help="Directory holding the *_measurements*.csv files "
-                             "(default: ./output).")
-    parser.add_argument("--outdir", default=DEFAULT_OUT_DIR,
-                        help="Where to write PNGs (default: output/charts).")
+                        help="Legacy flat directory holding *_measurements*.csv files "
+                             "(default: ./output). Ignored when --run is given.")
+    parser.add_argument("--outdir", default=None,
+                        help="Where to write PNGs. Default: <run dir>/charts when "
+                             "--run is given, else output/charts.")
     parser.add_argument("--suffix", default=None,
-                        help="Measurement suffix, e.g. '_testing' or '_http_mobile'. "
-                             "Default: MEASUREMENT_SUFFIX env, else '_testing', else plain.")
+                        help="Legacy measurement suffix, e.g. '_testing' or '_http_mobile'. "
+                             "Default: MEASUREMENT_SUFFIX env, else '_testing', else plain. "
+                             "Ignored when --run is given.")
     parser.add_argument("--protocols", nargs="+", choices=PROTOCOLS, default=PROTOCOLS,
                         help="Protocols to include (default: all).")
     parser.add_argument("--metrics", nargs="+", default=None,
@@ -447,13 +471,24 @@ def main():
     args = parser.parse_args()
     args.figsize = _parse_figsize(args.figsize)
 
-    outdir = args.outdir
+    # ------------------------------------------------------------------
+    # Data source: a single run directory (preferred) or the legacy flat CSVs.
+    # ------------------------------------------------------------------
+    if args.run is not None:
+        if not runs.read_manifest(args.runs_dir, args.run):
+            available = runs.list_runs(args.runs_dir)
+            hint = " Available runs:\n  " + "\n  ".join(available) if available else ""
+            sys.exit(f"No such run: {args.run!r} under {args.runs_dir!r}.{hint}")
+        csv_dir = runs.run_dir(args.runs_dir, args.run)
+        outdir = args.outdir or os.path.join(csv_dir, "charts")
+        print(f"Run:    {args.run}")
+    else:
+        csv_dir = args.csv_dir
+        outdir = args.outdir or DEFAULT_OUT_DIR
+
     os.makedirs(outdir, exist_ok=True)
 
-    suffix = args.suffix if args.suffix is not None else os.getenv("MEASUREMENT_SUFFIX")
-    candidates = [s for s in [suffix, "_testing", ""] if s is not None]
-
-    print(f"CSV dir: {args.csv_dir}")
+    print(f"CSV dir: {csv_dir}")
     print(f"Output:  {outdir}")
 
     # ------------------------------------------------------------------
@@ -461,7 +496,12 @@ def main():
     # ------------------------------------------------------------------
     client_rows = {}
     for protocol in args.protocols:
-        path = _resolve_file(args.csv_dir, protocol, candidates)
+        if args.run is not None:
+            path = _run_file(csv_dir, protocol)
+        else:
+            suffix = args.suffix if args.suffix is not None else os.getenv("MEASUREMENT_SUFFIX")
+            candidates = [s for s in [suffix, "_testing", ""] if s is not None]
+            path = _resolve_file(csv_dir, protocol, candidates)
         if not path:
             print(f"  (missing) {protocol}_measurements*.csv")
             continue
@@ -484,9 +524,14 @@ def main():
     # ------------------------------------------------------------------
     pcap_rows = None
     if not args.no_pcap:
-        pcap_path = _resolve_file(args.csv_dir, "pcap", candidates) or os.path.join(
-            args.csv_dir, "pcap_measurements.csv")
-        if os.path.isfile(pcap_path):
+        if args.run is not None:
+            pcap_path = _run_file(csv_dir, "pcap")
+        else:
+            suffix = args.suffix if args.suffix is not None else os.getenv("MEASUREMENT_SUFFIX")
+            candidates = [s for s in [suffix, "_testing", ""] if s is not None]
+            pcap_path = _resolve_file(csv_dir, "pcap", candidates) or os.path.join(
+                csv_dir, "pcap_measurements.csv")
+        if pcap_path and os.path.isfile(pcap_path):
             print(f"  using {os.path.basename(pcap_path)}")
             pcap_rows = {p: [] for p in PROTOCOLS}
             for row in _csv_rows(pcap_path):

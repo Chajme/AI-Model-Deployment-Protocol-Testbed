@@ -9,12 +9,15 @@ are `common/packet_capture.py` (capture) and `common/pcap_analyzer.py`
 
 ## 1. Entry points
 
-| How it starts | Called from | Suffix effect |
+| How it starts | Called from | Where rows go |
 |---|---|---|
-| `python protocols/benchmark_manager.py ...` | manual, no env | pcap rows → `pcap_measurements.csv` (no suffix) |
-| `run_protocol()` inside `runner.py` | automated sweep | pcap rows → `pcap_measurements{protocol}_{profile}.csv` |
+| `python protocols/benchmark_manager.py ...` | manual | new run dir: `output/runs/<timestamp>_<proto>[_<profile>]/` |
+| `run_protocol()` inside `runner.py` | automated sweep | run dir: `output/runs/<timestamp>_<proto>_<profile>/` |
 
-Both end up in `run_protocol(protocol, files, qos_levels, analyze)`.
+A run is created before transfers start (`common/runs.new_run` writes the
+`run.json` manifest and the `.active_run` marker). Both entry points end up in
+`run_protocol(protocol, files, qos_levels, analyze)`, which records the
+transferred `files` / `file_sizes` / `qos_levels` back into the manifest.
 
 ```python
 # benchmark_manager.py
@@ -46,9 +49,12 @@ outfile = start_capture_run(label, protocol)          # 1. tcpdump up
 try:
     docker compose exec <service> python -m <module> --file <filename> [--qos N]
 finally:
-    stop_capture_run(protocol, outfile, PCAP_DIR)     # 2. tcpdump down, pcap copied
+    stop_capture_run(protocol, outfile, runs.pcap_dir())  # 2. tcpdump down, pcap copied
 # 3. analyze + log (unless --no-analyze)
 ```
+
+`runs.pcap_dir()` resolves to `output/runs/<run_id>/pcap/` when a run is active,
+else the legacy `output/pcap/`.
 
 ### 2a. `start_capture_run(label, protocol)` — `common/packet_capture.py`
 
@@ -91,7 +97,10 @@ finally:
 `docker compose exec <client> python -m <module> --file <filename>` (plus
 `--qos N` for MQTT). Inside the container the client performs the transfer,
 measures runtime metrics, and appends its own row to
-`output/<proto>_measurements{suffix}.csv` (see [protocol-transfers](protocol-transfers.md)).
+`output/runs/<run_id>/<proto>_measurements.csv` (see
+[protocol-transfers](protocol-transfers.md)). The run id is resolved from the
+`RUN_ID` env var, or from the `.active_run` marker written by the host into the
+output bind mount.
 
 ### 2c. `stop_capture_run(protocol, container_pcap_path, host_pcap_dir)`
 
@@ -99,7 +108,7 @@ measures runtime metrics, and appends its own row to
    frames and close the pcap cleanly.
 2. **Wait for the process to exit** (poll `pgrep`; 5 s deadline) so the file is
    guaranteed complete before it is copied.
-3. `docker compose cp <capture-svc>:/tmp/<proto>_<label>.pcap ./output/pcap/`
+3. `docker compose cp <capture-svc>:/tmp/<proto>_<label>.pcap <run pcap dir>/`
    then `rm -f` the container-local copy.
 
 ---
@@ -113,7 +122,7 @@ size = os.path.getsize(os.path.join(DATA_DIR, filename))
 result = analyze_pcap(pcap_path, size, protocol=protocol, filename=filename,
                       qos_level=qos, label=label)
 print_result(result)                    # console "PCAP ANALYSIS" block
-write_to_file_pcap([result])            # appends a row to pcap_measurements*.csv
+write_to_file_pcap([result])            # appends a row to <run>/pcap_measurements.csv
 ```
 
 `analyze_pcap` is detailed in [pcap-analysis.md](pcap-analysis.md). If analysis
@@ -127,18 +136,26 @@ error is printed and the run moves on.
 `output/write_csv.py`:
 
 ```python
+def _measurement_dir():
+    output_dir = os.getenv("OUTPUT_DIR", "/app/output")
+    run_id = runs.active_run_id()        # RUN_ID env, else the .active_run marker
+    if run_id:
+        return runs.run_dir(output_dir, run_id)   # <OUTPUT_DIR>/runs/<run_id>
+    return output_dir                               # legacy flat fallback
+
 def _measurement_file(protocol):
-    suffix = os.getenv("MEASUREMENT_SUFFIX", "").strip().replace(" ", "_")
-    base   = os.getenv("OUTPUT_DIR", "/app/output")
-    return f"{base}/{protocol}_measurements{suffix}.csv"
+    return f"{_measurement_dir()}/{protocol}_measurements.csv"
 ```
 
 - In containers `OUTPUT_DIR` defaults to `/app/output` (bind-mounted to
   `./output`); the host harness sets `OUTPUT_DIR=./output` before anything runs.
+- **Every row** carries `run_id`, `timestamp`, `network_profile` metadata columns
+  (`META_FIELDS`), added on first write. Pre-existing legacy files (without the
+  columns) are appended unchanged.
 - Rows are **appended**; the header is written only when the file is created.
-- `MEASUREMENT_SUFFIX` is what separates baseline (`_testing`) and per-profile
-  (`{protocol}_{profile}`) datasets. See [network-chaos](network-chaos.md) for
-  how `runner.py` sets it.
+- Filenames no longer carry `MEASUREMENT_SUFFIX` — the run id + `run.json`
+  manifest carry the protocol/profile context. See
+  [network-chaos](network-chaos.md) for how `runner.py` sets up a run.
 
 All 16 pcap columns plus the client-side schemas are documented in
 [metrics-schema.md](metrics-schema.md).

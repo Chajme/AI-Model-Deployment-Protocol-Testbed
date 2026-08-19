@@ -1,7 +1,7 @@
 # pcap analysis — `common/pcap_analyzer.py`
 
-`analyze_pcap()` turns one pcap into the 16 metrics logged to
-`pcap_measurements*.csv`. It shells out to `tshark` (Wireshark's CLI) four
+`analyze_pcap()` turns one pcap into the 16 metrics logged to the run's
+`pcap_measurements.csv`. It shells out to `tshark` (Wireshark's CLI) four
 times. This page documents every query, the per-protocol config, and the
 retransmission logic in detail.
 

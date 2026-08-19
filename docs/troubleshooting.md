@@ -36,8 +36,8 @@ and increase `TCPDUMP_BUFFER_KB`.
 
 The analyzed file isn't the one captured, or the capture never started.
 
-- pcaps are written to `output/pcap/` on the host (copied from the sidecar's
-  `/tmp` by `stop_capture_run`). Confirm the timestamp/size.
+- pcaps are written to `output/runs/<run_id>/pcap/` on the host (copied from
+  the sidecar's `/tmp` by `stop_capture_run`). Confirm the timestamp/size.
 - Check the analyzer's filter matches the traffic (`-Y mqtt`/`http`/`coap`) —
   CoAP is dissected on UDP 5683 by default; the server binds `0.0.0.0:5683`.
 
@@ -78,31 +78,40 @@ publish ports (all traffic is inside the bridge networks). Remove the old stack
 By design: UDP + blockwise + `tc`. E.g. 50 MB at `harsh` (256 kbit, 300 ms,
 Gilbert–Elliott loss) ≈ tens of minutes, with CoAP CON retransmissions under
 loss. The retransmission counter (repeated CON MIDs) will reflect it — check
-`pcap_measurements*.csv`.
+the run's `pcap_measurements.csv`.
 
 ---
 
 ## CSVs / data separation
 
-### Everything lands in `pcap_measurements.csv` regardless of profile
+### Everything lands in the same CSV regardless of profile
 
-Regression of the `runner.py` env-propagation fix. `run_experiment` must call
-`os.environ.update(env)` (runner.py) so the host-side `write_to_file_pcap`
-reads `MEASUREMENT_SUFFIX` from the process environment. Without it, every
-profile's pcap rows merge into the unsuffixed base file while the client CSVs
-stay separated.
+Regression of the run-creation logic. Every experiment must create a fresh run
+directory (`common/runs.new_run` → `output/runs/<run_id>/`) and set `RUN_ID`
+before any transfer. `runner.run_experiment` does this; `benchmark_manager`
+`_ensure_run` does it for manual CLI runs.
 
-Fix: keep the `os.environ.update(env)` line in `run_experiment`; then pcap rows
-go to `pcap_measurements{proto}_{profile}.csv`.
+Fix: confirm a `run.json` exists under `output/runs/<run_id>/` and that rows in
+`pcap_measurements.csv` / `<proto>_measurements.csv` carry the expected `run_id`
+column. If rows appear without metadata columns, the writer fell back to the
+legacy flat `OUTPUT_DIR` — no run was active (missing `RUN_ID`/`.active_run`).
 
 ### Charts show mixed profiles / huge error bands
 
-The chart tool plots whatever is in the selected CSV (`common/charts.py`
-`_resolve_file`). If old runs from different profiles (or pre-fix states) are in
-one file, aggregates span them.
+The chart tool plots one run directory (`common/charts.py --run <run_id>`).
+If the selected run accidentally contains data from different profiles, or you
+forgot `--run` and used the legacy `--csv-dir` mode on accumulated flat files,
+aggregates span them.
 
-Fix: delete the stale CSV(s) and re-run, or use `--suffix <proto_profile>` to
-select one profile's dataset.
+Fix: use `--run <run_id>` (one run = one profile = clean bands). Legacy flat
+files were archived to `output/legacy/`.
+
+### Rows lost / `run_id` empty
+
+A row with an empty `run_id` column means no run was active when it was written
+(no `RUN_ID` env and no `.active_run` marker reachable through the output bind
+mount). In the manual flow, run `benchmark_manager.py` through its CLI (which
+creates a run) instead of driving transfers with raw `docker compose exec`.
 
 ### `ValueError: dict contains fields not in fieldnames: 'packet_types'`
 

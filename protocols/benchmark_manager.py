@@ -8,8 +8,8 @@
       1. starts tcpdump in the protocol's capture sidecar container
       2. executes a single-file transfer inside the protocol's client container
       3. stops tcpdump (clean pcap close)
-      4. analyzes the pcap with tshark and appends a row to
-         output/pcap_measurements{suffix}.csv
+      4. analyzes the pcap with tshark and appends a row to the active run's
+         pcap_measurements.csv (output/runs/<run_id>/; see common/runs.py)
 """
 
 import argparse
@@ -27,9 +27,9 @@ from common.file_manager import load_binary_files, get_file_path_input
 from common.packet_capture import start_capture_run, stop_capture_run
 from common.pcap_analyzer import analyze_pcap, print_result
 from output.write_csv import write_to_file_pcap
+import common.runs as runs
 
 DATA_DIR = os.getenv("DATA_DIR", "./data")
-PCAP_DIR = os.getenv("PCAP_DIR", "./output/pcap")
 
 # Host-side runs should still write CSVs next to the pcaps (./output),
 # not to the in-container /app/output path.
@@ -91,7 +91,7 @@ def run_transfer(protocol: str, filename: str, qos: int | None = None, analyze: 
 
         subprocess.run(command, check=True)
     finally:
-        stop_capture_run(protocol, outfile, PCAP_DIR)
+        stop_capture_run(protocol, outfile, runs.pcap_dir())
 
     print(f"  -> Capture stopped: {outfile}")
 
@@ -99,7 +99,7 @@ def run_transfer(protocol: str, filename: str, qos: int | None = None, analyze: 
         return
 
     size = file_size_bytes(filename)
-    pcap_path = os.path.join(PCAP_DIR, os.path.basename(outfile))
+    pcap_path = os.path.join(runs.pcap_dir(), os.path.basename(outfile))
 
     try:
         result = analyze_pcap(
@@ -131,14 +131,53 @@ def run_protocol(protocol: str, files: list[str] | None = None, qos_levels: list
         print(f"No .bin files found for {protocol}.")
         return
 
+    # Record what this run actually covered in the manifest (useful for later
+    # processing without re-reading the data directory).
+    run_id = runs.active_run_id()
+    if run_id:
+        sizes = [os.path.getsize(get_file_path_input(f)) for f in files]
+        runs.update_manifest(
+            os.environ.get("OUTPUT_DIR", "./output"),
+            run_id,
+            {"file_sizes": sizes, "files": files},
+        )
+
     if runner["has_qos"]:
         qos_levels = qos_levels or DEFAULT_MQTT_QOS
+        if run_id:
+            runs.update_manifest(
+                os.environ.get("OUTPUT_DIR", "./output"),
+                run_id,
+                {"qos_levels": qos_levels},
+            )
         for qos in qos_levels:
             for filename in files:
                 run_transfer(protocol, filename, qos=qos, analyze=analyze)
     else:
         for filename in files:
             run_transfer(protocol, filename, qos=None, analyze=analyze)
+
+
+def _ensure_run(protocols: list[str]) -> str | None:
+    """Create a fresh run for a manual (non-runner) invocation.
+
+    The automated runner already creates the run and sets RUN_ID; the manual
+    CLI creates one (timestamp-based) so manual transfers still land in a
+    self-contained run directory instead of the legacy flat output.
+    """
+    if runs.active_run_id():
+        return None
+    output_dir = os.environ.get("OUTPUT_DIR", "./output")
+    rid = runs.new_run(
+        output_dir,
+        protocols[0],
+        profile=os.getenv("NETWORK_PROFILE"),
+        meta={"flow": "manual"},
+    )
+    os.environ["RUN_ID"] = rid
+    runs.write_marker(output_dir, rid)
+    print(f"  -> Run: {rid}")
+    return rid
 
 
 def main():
@@ -170,6 +209,8 @@ def main():
     args = parser.parse_args()
 
     files = [args.file] if args.file else None
+
+    _ensure_run(args.protocol)
 
     for protocol in args.protocol:
         run_protocol(protocol, files=files, qos_levels=args.qos, analyze=not args.no_analyze)

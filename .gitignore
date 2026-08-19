@@ -9,6 +9,9 @@ __pycache__/
 # Generated benchmark artifacts
 output/pcap/
 output/charts/
+output/runs/
+output/legacy/
+output/.active_run
 output/*.csv
 output/*.bin
 data/*.bin

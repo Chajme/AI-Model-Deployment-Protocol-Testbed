@@ -28,9 +28,11 @@ Behavior notes:
 
 - Non-MQTT protocols ignore `--qos`; MQTT requires `qos in {1,2}` (the client
   itself enforces `--qos` as required int).
-- Environment it reads: `DATA_DIR` (`./data`), `PCAP_DIR` (`./output/pcap`),
-  `OUTPUT_DIR` (set to `./output` by defaulting), `MEASUREMENT_SUFFIX` (via the
-  CSV writer).
+- A manual invocation creates a **run** (`output/runs/<timestamp>_<proto>.../`)
+  via `_ensure_run` unless `RUN_ID` is already set (e.g. by `runner.py`).
+- Environment it reads: `DATA_DIR` (`./data`), `OUTPUT_DIR` (defaults to
+  `./output`), `NETWORK_PROFILE` (recorded in the manifest), `RUN_ID` (or the
+  `.active_run` marker).
 - Expects `docker` and `tshark` on the host, and the compose stack up.
 
 ---
@@ -46,13 +48,15 @@ python runner.py [--protocols mqtt http coap]
 |---|---|---|---|
 | `--protocols` | nargs+ (choices `http mqtt coap`) | all | protocols to sweep |
 | `--profiles` | nargs+ (choices from `network_chaos.sh`) | `[mobile]` | profiles to run |
+| `--run-id` | str | auto | explicit run id (must not already exist) |
 
-Per (protocol × profile) it: sets
+Per (protocol × profile) it: creates a run
+(`common/runs.new_run` → `output/runs/<timestamp>_<proto>_<profile>/`), sets
 `COMPOSE_FILE=docker-compose.automated.yaml`, `COMPOSE_PROFILES=<proto>`,
-`NETWORK_PROFILE=<profile>`, `MEASUREMENT_SUFFIX=<proto>_<profile>` into the
-**process environment**, builds images, `docker compose up -d`, probes
-reachability, calls `run_protocol(protocol)`, then `docker compose down -v` in
-a `finally`.
+`NETWORK_PROFILE=<profile>`, `MEASUREMENT_SUFFIX=<proto>_<profile>`, `RUN_ID`
+into the **process environment**, writes the `.active_run` marker, builds
+images, `docker compose up -d`, probes reachability, calls
+`run_protocol(protocol)`, then `docker compose down -v` in a `finally`.
 
 Unsupported profile names exit 1 (from `network_chaos.sh`).
 
@@ -66,9 +70,10 @@ python common/charts.py [options]
 
 Full flag table in [charts.md](charts.md). Summary:
 
-- Selection: `--csv-dir`, `--outdir`, `--suffix`, `--protocols`, `--metrics`,
-  `--file-sizes`, `--qos`, `--mqtt-side`, `--no-client`, `--no-pcap`,
-  `--no-overview`.
+- Data source: `--run <run_id>` (preferred) / `--runs-dir <parent>`; legacy
+  fallback `--csv-dir`, `--outdir`, `--suffix`.
+- Selection: `--protocols`, `--metrics`, `--file-sizes`, `--qos`, `--mqtt-side`,
+  `--no-client`, `--no-pcap`, `--no-overview`.
 - Styling: `--chart-type auto|line|bar`, `--agg mean|median|min|max`,
   `--error none|minmax|std|q90`, `--x-scale auto|linear|log`,
   `--y-scale linear|log`, `--dpi N`, `--figsize WxH`.
@@ -116,10 +121,10 @@ after a `--file` run they keep the container alive ~3 s, otherwise ~30 s.
 | Variable | Where | Default | Effect |
 |---|---|---|---|
 | `DATA_DIR` | harness, file_manager | `./data` | payload directory |
-| `OUTPUT_DIR` | write_csv, file_manager, charts | `./output` (host) / `/app/output` (container) | results directory |
-| `PCAP_DIR` | benchmark_manager | `./output/pcap` | where pcaps are copied |
-| `MEASUREMENT_SUFFIX` | write_csv, charts | `` (empty) | CSV suffix separating datasets |
-| `NETWORK_PROFILE` | network_chaos.sh | `iot` | which tc profile to apply |
+| `OUTPUT_DIR` | write_csv, file_manager, charts, runs | `./output` (host) / `/app/output` (container) | results directory (runs live under `<OUTPUT_DIR>/runs/`) |
+| `RUN_ID` | write_csv, runs | `` (empty) | active run id (containers fall back to the `.active_run` marker) |
+| `MEASUREMENT_SUFFIX` | runner, manifest | `` (empty) | recorded in `run.json`; no longer affects filenames |
+| `NETWORK_PROFILE` | network_chaos.sh, manifest | `iot` | which tc profile to apply (recorded per row + manifest) |
 | `APP_COMMAND` | network_chaos.sh | unset | command to run after tc (servers/receiver) |
 | `COMPOSE_FILE` / `COMPOSE_PROFILES` | runner.py | — | selects the automated stack + protocol |
 | `CPU_TDP_WATTS` | resource_monitor | `15.0` | TDP used in the energy estimate |

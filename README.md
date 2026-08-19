@@ -55,9 +55,14 @@ A **host-side harness** drives one transfer at a time:
 
 1. start `tcpdump` in the capture sidecar (offloads disabled first),
 2. exec a single-file transfer inside the client container,
-3. stop `tcpdump`, copy the pcap from the container to `output/pcap/`,
-4. analyze the pcap with tshark and append a row to `output/pcap_measurements*.csv`,
-   while the client appends its runtime row to `output/<proto>_measurements*.csv`.
+3. stop `tcpdump`, copy the pcap from the container to the run's `pcap/`,
+4. analyze the pcap with tshark and append a row to the run's
+   `pcap_measurements.csv`, while the client appends its runtime row to the
+   run's `<proto>_measurements.csv`.
+
+Every experiment is an immutable **run directory** (`output/runs/<run_id>/`)
+holding a `run.json` manifest, the CSVs, the pcaps, and on-demand charts —
+see [docs/metrics-schema.md](docs/metrics-schema.md).
 
 Two compose stacks share the same image:
 
@@ -94,7 +99,8 @@ protocols/                     per-protocol containers and the orchestration ent
   CoAP/server/coap_server.py   blockwise upload resource
 scripts/network_chaos.sh       tc netem + tbf profile applicator (entrypoint for chaos images)
 data/binary_file_generator.py  random-payload generator (edit sizes at the bottom)
-output/                        bind-mounted results (see Outputs); write_csv.py lives here
+output/                        bind-mounted results (runs/<run_id>/, write_csv.py lives here)
+common/runs.py                 run registry: create/read immutable run dirs + manifest
 runner.py                      automated protocol × profile sweep
 docker-compose.yaml            manual stack
 docker-compose.automated.yaml  automated stack (chaos profiles)
@@ -116,7 +122,7 @@ Dockerfile                     app image (python:3.13.3-slim + iproute2 + ethtoo
 
 ## Metrics collected
 
-### Client side (`output/<proto>_measurements<suffix>.csv`)
+### Client side (`output/runs/<run_id>/<proto>_measurements.csv`)
 
 | Metric | HTTP | MQTT | CoAP |
 |---|---|---|---|
@@ -132,7 +138,7 @@ Dockerfile                     app image (python:3.13.3-slim + iproute2 + ethtoo
 Energy is estimated as `avg CPU fraction × TDP × duration`, where TDP defaults
 to 15 W and can be overridden with the `CPU_TDP_WATTS` environment variable.
 
-### Packet side (`output/pcap_measurements<suffix>.csv`)
+### Packet side (`output/runs/<run_id>/pcap_measurements.csv`)
 
 | Column | Meaning |
 |---|---|
@@ -220,22 +226,24 @@ server/broker `eth0`:
 
 | Path | Producer | Content |
 |---|---|---|
-| `output/<proto>_measurements_testing.csv` | client container | runtime metrics per transfer (manual runs) |
-| `output/<proto>_measurements<proto>_<profile>.csv` | client container | runtime metrics per profile (runner) |
-| `output/pcap_measurements*.csv` | host harness | tshark analysis per run |
-| `output/pcap/<proto>_<file>.pcap` | capture sidecar | raw capture, one file per run |
-| `output/charts/*.png` | `common/charts.py` | 14 comparison charts incl. `overview.png` |
+| `output/runs/<run_id>/run.json` | harness | manifest (protocol, profile, files, tool versions) |
+| `output/runs/<run_id>/<proto>_measurements.csv` | client container | runtime metrics per transfer (manual + runner) |
+| `output/runs/<run_id>/pcap_measurements.csv` | host harness | tshark analysis per transfer |
+| `output/runs/<run_id>/pcap/<proto>_<file>.pcap` | capture sidecar | raw capture, one file per transfer |
+| `output/runs/<run_id>/charts/*.png` | `common/charts.py --run` | 14 comparison charts incl. `overview.png` |
+| `output/legacy/` | archived | pre-run-organization CSVs and pcaps |
 | `uploads/` | HTTP/CoAP servers | received files (mirror of what was transferred) |
 
-Generated artifacts (pcaps, CSVs, binaries, charts, `.venv`) are git-ignored —
-the repo tracks source only.
+Every run is an immutable snapshot; `common/runs.py` lists/reads them
+(`list_runs`, `find_runs`, `load_csv`). Generated artifacts (runs, pcaps, CSVs,
+binaries, charts, `.venv`) are git-ignored — the repo tracks source only.
 
 ---
 
 ## Charts
 
-`common/charts.py` reads the CSVs and writes PNGs to `output/charts/` (default)
-or `--outdir`:
+`common/charts.py` charts one run via `--run <run_id>` (PNGs go to
+`<run>/charts/` by default), with a legacy `--csv-dir`/`--suffix` fallback:
 
 - **Line charts** for size-dependent metrics (goodput, transfer time, latency,
   overhead %, bytes, packets, retransmissions) — x = file size (log scale),
@@ -243,14 +251,13 @@ or `--outdir`:
   aggregated (mean) with a shaded min–max band.
 - **Grouped bar charts** for CPU/RAM/energy and the overview dashboard.
 
-Selection: `--suffix <proto_profile>`, `--protocols`, `--metrics`,
-`--file-sizes`, `--qos`, `--mqtt-side`, `--no-client`, `--no-pcap`,
-`--no-overview`, `--csv-dir`, `--outdir`.
+Selection: `--run`, `--runs-dir`, `--protocols`, `--metrics`, `--file-sizes`,
+`--qos`, `--mqtt-side`, `--no-client`, `--no-pcap`, `--no-overview`.
 Styling: `--chart-type auto|line|bar`, `--agg mean|median|min|max`,
 `--error none|minmax|std|q90`, `--x-scale`, `--y-scale`, `--dpi`, `--figsize`.
 
-Example: `python common/charts.py --suffix http_good --metrics goodput_mbps
-overhead_percentage`
+Example: `python common/charts.py --run 20260818T201455_mqtt_harsh --metrics
+goodput_mbps overhead_percentage`
 
 ---
 
@@ -259,15 +266,13 @@ overhead_percentage`
 - **Same payloads**: `data/*.bin` are random (`os.urandom`) — copy the generated
   files between machines rather than regenerating them.
 - **Same profiles & analysis path**: pcap columns come from the same
-  `common/pcap_analyzer.py` on every host; CSV suffixes encode protocol + profile.
+  `common/pcap_analyzer.py` on every host; runs are immutable and self-describing
+  (`run.json` + `run_id`/`network_profile` columns), so compare by run id.
 - **Pin versions** (see TUTORIAL §7): the Dockerfile pins `python:3.13.3-slim`;
   `eclipse-mosquitto:latest` and `nicolaka/netshoot` are unpinned.
 - **Compose project name = folder name**, so two copies of the repo form two
   separate stacks. The stacks no longer bind host ports, so multiple copies can
   even run simultaneously without conflicts.
-- **Manual vs. profile runs**: `benchmark_manager.py` (no suffix) appends to the
-  plain `pcap_measurements.csv`; `runner.py` writes suffixed files per profile.
-  Delete a CSV before a fresh manual round if you want clean, comparable charts.
 
 ---
 

@@ -78,8 +78,9 @@ names, so one `docker compose build` covers both.
 
 - Servers/broker **auto-start** (`command: python -m ...`); clients are idle.
 - Capture sidecars are idle, waiting for tcpdump to be started per run.
-- Client containers set `MEASUREMENT_SUFFIX=_testing`, so client CSV rows land
-  in `output/<proto>_measurements_testing.csv`.
+- `MEASUREMENT_SUFFIX=_testing` is set (recorded in `run.json`); a manual
+  `benchmark_manager.py` invocation creates a run, so client CSV rows land in
+  `output/runs/<run_id>/<proto>_measurements.csv`.
 - No `tc` — a clean baseline network.
 
 ### `docker-compose.automated.yaml` — chaos sweep
@@ -89,7 +90,8 @@ names, so one `docker compose build` covers both.
 - Every service runs `network_chaos.sh` as its entry point, which applies the
   `tc` profile to `eth0` before doing anything else.
 - `NETWORK_PROFILE` and `MEASUREMENT_SUFFIX` are injected from the host env
-  (set by `runner.py`).
+  (set by `runner.py`), and `runner.py` creates an immutable run directory
+  (`output/runs/<run_id>/`) that host and containers share.
 - Servers/receiver get `APP_COMMAND` (the real program to start after tc);
   clients get neither, so they apply tc and stay idle.
 - `CAP_NET_ADMIN` on every service (and `NET_RAW` on captures) is what allows

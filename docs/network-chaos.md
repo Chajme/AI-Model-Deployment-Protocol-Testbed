@@ -38,12 +38,14 @@ def run_experiment(protocol, profile):
 - `COMPOSE_FILE=docker-compose.automated.yaml` selects the chaos stack for
   every docker call, including the ones `benchmark_manager` makes through
   `packet_capture.py`.
-- `MEASUREMENT_SUFFIX={protocol}_{profile}` is what separates datasets
-  (e.g. `pcap_measurementshttp_good.csv`). The `os.environ.update(env)` line is
-  required so the **host-side** pcap writer (`output/write_csv.py`, which reads
-  `MEASUREMENT_SUFFIX` from the process environment) writes to the same
-  suffixed file as the client containers. Without it, every profile's pcap rows
-  would pile into the plain `pcap_measurements.csv`.
+- Each experiment gets a **fresh run directory**
+  (`output/runs/<timestamp>_<proto>_<profile>/` via `common/runs.new_run`) so
+  every profile's rows are cleanly separated without suffix parsing. The
+  `os.environ.update(env)` line is still required so the host process inherits
+  `RUN_ID` (and `MEASUREMENT_SUFFIX`, recorded in `run.json`) and the
+  **host-side** pcap writer writes to the same run directory as the client
+  containers. The `.active_run` marker in `output/` is how the containers
+  (which lack `RUN_ID`) resolve the same run through the bind mount.
 
 ### Reachability probe
 
@@ -131,14 +133,15 @@ Unknown profiles exit 1.
   - CoAP — repeated CON MIDs count retransmits (see pcap-analysis).
 - On heavily throttled profiles (e.g. 50 MB under `harsh` at 256 kbit ≈ 26 min),
   capture completeness warnings may appear if the host can't keep up; the
-  per-run pcap + CSV still land in suffixed files.
+  per-run pcap + CSV still land in the run directory.
 
 ---
 
 ## 4. Reproducibility notes
 
-- `docker compose down -v` removes **named volumes only**; `output/`,
-  `output/pcap/` are bind mounts, so results survive between profiles.
+- `docker compose down -v` removes **named volumes only**; `output/` is a bind
+  mount, so runs survive between profiles (each profile writes to its own
+  `output/runs/<run_id>/`).
 - The compose project name is the **folder name** — a copied repo is a separate
   project. Since no host ports are bound, two projects can run concurrently.
 - Payloads are `os.urandom`-based; copy `data/*.bin` between machines instead

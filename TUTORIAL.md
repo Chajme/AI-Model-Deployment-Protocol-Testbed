@@ -155,18 +155,20 @@ Files written:
 
 | Path | Producer | Content |
 |---|---|---|
-| `output/<proto>_measurements_testing.csv` | client container | runtime metrics (transfer time, RTT/TTFB, goodput, CPU/RAM, energy, integrity) |
-| `output/pcap_measurements.csv` | host harness | tshark analysis (packet counts, overhead, goodput, retransmissions, packet types) |
-| `output/pcap/<proto>_<file>.pcap` | capture sidecar | raw capture, one file per run |
+| `output/runs/<run_id>/<proto>_measurements.csv` | client container | runtime metrics (transfer time, RTT/TTFB, goodput, CPU/RAM, energy, integrity) |
+| `output/runs/<run_id>/pcap_measurements.csv` | host harness | tshark analysis (packet counts, overhead, goodput, retransmissions, packet types) |
+| `output/runs/<run_id>/pcap/<proto>_<file>.pcap` | capture sidecar | raw capture, one file per transfer |
+| `output/runs/<run_id>/run.json` | harness | manifest (protocol, profile, files, tool versions) |
 
-Inspect results:
+Each manual `benchmark_manager.py` invocation creates a fresh run directory
+(e.g. `output/runs/20260818T201455_http/`). Inspect results:
 
 ```bash
 # PowerShell
-Import-Csv output\http_measurements_testing.csv
-Import-Csv output\pcap_measurements.csv
-# python
-python -c "import pandas as pd; print(pd.read_csv('output/http_measurements_testing.csv'))"
+Import-Csv output\runs\<run_id>\http_measurements.csv
+Import-Csv output\runs\<run_id>\pcap_measurements.csv
+# python (run registry)
+python -c "import common.runs as r; print(r.load_csv('output', '<run_id>', 'http'))"
 ```
 
 ---
@@ -201,15 +203,16 @@ Network profiles (`scripts/network_chaos.sh`), applied on the client **and** ser
 Because tc is applied inside the containers, each run is reproducible across hosts —
 no real network needed.
 
-Result CSVs get a per-run suffix:
+Each (protocol × profile) writes to its own immutable run directory:
 
 ```bash
-output/<proto>_measurements_<proto>_<profile>.csv
-output/pcap_measurements_<proto>_<profile>.csv
+output/runs/20260818T201455_mqtt_good/
+output/runs/20260818T201455_http_good/
+...
 ```
 
 > `docker compose down -v` in `runner.py` removes **named volumes** only. Your
-> `output/` and `output/pcap/` are **bind mounts**, so pcaps and CSVs survive.
+> `output/` is a **bind mount**, so runs survive.
 
 ---
 
@@ -222,7 +225,8 @@ host only):
 ```bash
 pip install -r requirements-charts.txt   # adds matplotlib
 
-python common/charts.py                  # reads ./output, writes output/charts
+python common/charts.py --run <run_id>   # charts ONE run's data into <run>/charts/
+python common/charts.py                   # legacy: reads ./output flat files
 ```
 
 ### Chart types (auto-selected, overridable)
@@ -242,9 +246,11 @@ Selection:
 
 | Flag | Effect |
 |---|---|
-| `--suffix _testing` | pick which measurement set (default: `MEASUREMENT_SUFFIX` env, then `_testing`, then plain) |
-| `--csv-dir <dir>` | where the CSVs live (default `./output`) |
-| `--outdir <dir>` | where the PNGs are written (default `output/charts`) |
+| `--run <run_id>` | chart one run directory under `--runs-dir` (preferred; overrides the legacy flags) |
+| `--runs-dir <dir>` | directory containing the `runs/` tree (default `./output`) |
+| `--suffix _testing` | legacy: pick a measurement set (default: `MEASUREMENT_SUFFIX` env, then `_testing`, then plain) |
+| `--csv-dir <dir>` | legacy: where the flat CSVs live (default `./output`) |
+| `--outdir <dir>` | where the PNGs are written (default `<run>/charts` with `--run`, else `output/charts`) |
 | `--protocols http mqtt` | subset of protocols to plot |
 | `--metrics goodput_mbps overhead_percentage` | only these metrics (default: all) |
 | `--file-sizes 1 5 20 50` | only these file sizes in MB |
@@ -268,9 +274,10 @@ Styling:
 Examples:
 
 ```bash
-python common/charts.py --metrics goodput_mbps overhead_percentage
-python common/charts.py --file-sizes 1 5 20 50 --qos 2
-python common/charts.py --chart-type bar --error none
+python common/charts.py --run 20260818T201455_mqtt_harsh
+python common/charts.py --run <run_id> --metrics goodput_mbps overhead_percentage
+python common/charts.py --run <run_id> --file-sizes 1 5 20 50 --qos 2
+python common/charts.py --run <run_id> --chart-type bar --error none
 ```
 
 What it produces (14 PNGs by default): `client_goodput_mbps`,
@@ -278,15 +285,12 @@ What it produces (14 PNGs by default): `client_goodput_mbps`,
 `client_peak_ram_mb`, `client_energy_j` from the client-runtime CSVs (MQTT uses
 its sender rows), `pcap_goodput_mbps`, `pcap_wire_throughput_mbps`,
 `pcap_overhead_percentage`, `pcap_total_overhead_bytes`, `pcap_total_wire_bytes`,
-`pcap_retransmissions`, `pcap_total_packets` from `pcap_measurements*.csv`, and
-`overview.png` dashboard.
+`pcap_retransmissions`, `pcap_total_packets` from `pcap_measurements.csv`, and
+`overview.png` dashboard — all inside `output/runs/<run_id>/charts/`.
 
-> **Note:** charts reflect everything currently in the CSVs. `runner.py` writes
-> each profile to its own suffixed file (e.g. `pcap_measurementshttp_good.csv`),
-> so use `--suffix http_good` to plot one network profile. Manual
-> `benchmark_manager` runs (no `MEASUREMENT_SUFFIX`) append to the plain
-> `pcap_measurements.csv`; delete it before a fresh manual round if you want
-> clean, comparable charts.
+> **Note:** `--run <run_id>` charts exactly one run — no cross-profile mixing, no
+> suffix guessing. Old flat CSVs are archived to `output/legacy/`; use the legacy
+> `--csv-dir`/`--suffix` flags only for that historical data.
 
 ---
 
@@ -299,8 +303,9 @@ its sender rows), `pcap_goodput_mbps`, `pcap_wire_throughput_mbps`,
 2. **Normalize payloads.** Use the same `data/*.bin` set everywhere
    (`binary_file_generator.py` must produce identical files — it uses `os.urandom`,
    so copy the generated files, don't regenerate them on each machine).
-3. **Use the same profiles and files.** The CSV suffix already encodes
-   protocol + profile; keep files fixed.
+3. **Use the same profiles and files.** Each run is immutable and self-describing
+   (`run.json` + the `run_id`/`network_profile` columns), so keep files fixed and
+   compare by run id.
 4. **Same analysis path.** The pcap measurement columns come from the same
    `common/pcap_analyzer.py` on every host.
 
@@ -322,7 +327,7 @@ can even run **simultaneously** without conflicts.
 | `tcpdump never started writing ...` | capture sidecar isn't ready / netshoot not pulled. Re-run `docker compose up -d` and check `docker compose ps` |
 | `Bind for 0.0.0.0:1883 failed: port is already allocated` | another stack still binds host ports. Use the updated compose (no host bindings), or change the left side to e.g. `11883:1883` |
 | `tc` errors like `RTNETLINK answers: Operation not permitted` | Docker backend not giving NET_ADMIN. Switch to Docker Desktop **WSL2** backend (Windows) or native Linux |
-| transfer succeeds but no `CON/ACK` in pcap | wrong pcap read back (`output/pcap_measurements.csv` at host path; pcaps on disk at `output/pcap/`) |
+| transfer succeeds but no `CON/ACK` in pcap | wrong pcap read back (pcaps live at `output/runs/<run_id>/pcap/`; CSVs at `output/runs/<run_id>/`) |
 
 ---
 
@@ -338,6 +343,7 @@ docker compose up -d
 docker compose ps                       # all 10 containers Up
 .venv\Scripts\python protocols\benchmark_manager.py --protocol http --file binary_file_1mb.bin
 # expect: Success! + PCAP ANALYSIS block + INTEGRITY OK
+#         run dir: output/runs/<timestamp>_http/ (run.json + CSVs + pcap/)
 .venv\Scripts\python runner.py --protocols http --profiles good mobile
-# expect: <proto>_<profile> CSVs in output/
+# expect: one immutable run dir per (protocol × profile) under output/runs/
 ```

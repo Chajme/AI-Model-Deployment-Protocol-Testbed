@@ -23,6 +23,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from protocols.benchmark_manager import run_protocol, RUNNERS
+import common.runs as runs
 
 COMPOSE_FILE_AUTOMATED = "docker-compose.automated.yaml"
 
@@ -62,21 +63,31 @@ def wait_for_service(env, protocol, timeout=60):
     raise RuntimeError(f"{protocol} service {host}:{port} never became reachable")
 
 
-def run_experiment(protocol, profile):
+def run_experiment(protocol, profile, run_id=None):
     print(f"\n=== Running {protocol.upper()} | {profile} ===")
+
+    # Every experiment writes to its own immutable run directory
+    # (output/runs/<run_id>/) shared by the host harness and the containers.
+    output_dir = os.path.abspath("output")
+    rid = runs.new_run(output_dir, protocol, profile, run_id=run_id)
 
     env = BASE_ENV.copy()
     env["COMPOSE_FILE"] = COMPOSE_FILE_AUTOMATED
     env["COMPOSE_PROFILES"] = protocol
     env["NETWORK_PROFILE"] = profile
     env["MEASUREMENT_SUFFIX"] = f"{protocol}_{profile}"
+    env["RUN_ID"] = rid
 
     # Inherit the experiment environment so that run_protocol() (which runs in
     # this process and drives the capture/analysis/CSV writing) sees the same
-    # COMPOSE_FILE / COMPOSE_PROFILES / MEASUREMENT_SUFFIX as the containers.
-    # Without this, pcap rows would all land in the unsuffixed base CSV and
+    # COMPOSE_FILE / COMPOSE_PROFILES / MEASUREMENT_SUFFIX / RUN_ID as the
+    # containers. Without this, pcap rows would land outside the run dir and
     # mix every network profile together.
     os.environ.update(env)
+
+    # Sidecar marker lets containers (which lack RUN_ID) resolve the active run
+    # through the output bind mount.
+    runs.write_marker(output_dir, rid)
 
     try:
         # Start only the selected protocol's stack (clients stay idle; tc is
@@ -98,6 +109,7 @@ def run_experiment(protocol, profile):
     finally:
         # Always clean up
         subprocess.run(["docker", "compose", "down", "-v"], env=env)
+        runs.clear_marker(output_dir)
 
 
 def main():
@@ -115,6 +127,11 @@ def main():
         default=["mobile"],
         help="Network profiles to run (default: mobile).",
     )
+    parser.add_argument(
+        "--run-id",
+        default=None,
+        help="Explicit run id instead of the auto-generated timestamp+protocol+profile one.",
+    )
     args = parser.parse_args()
 
     if not args.protocols or not args.profiles:
@@ -128,7 +145,7 @@ def main():
     subprocess.run(build_cmd, check=True)
 
     for protocol, profile in itertools.product(args.protocols, args.profiles):
-        run_experiment(protocol, profile)
+        run_experiment(protocol, profile, run_id=args.run_id)
 
 
 if __name__ == "__main__":

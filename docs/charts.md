@@ -29,7 +29,7 @@ pip install -r requirements-charts.txt
 
 ### pcap metrics (`PCAP_METRICS`)
 
-All size-dependent, single source (the `pcap_measurements*.csv`):
+All size-dependent, single source (the run's `pcap_measurements.csv`):
 
 | Metric | Title | y-label |
 |---|---|---|
@@ -120,18 +120,32 @@ def _error_bounds(values, error): # none | minmax (default) | std | q90
 
 ---
 
-## 6. File resolution (`_resolve_file`)
+## 6. Data source (`--run` preferred, legacy fallback)
+
+Run mode is the default workflow:
+
+```bash
+python common/charts.py --run 20260818T201455_mqtt_harsh
+python common/charts.py --runs-dir output --run <run_id>   # --runs-dir is the OUTPUT_DIR parent
+```
+
+```python
+run_dir = <runs-dir>/runs/<run_id>
+client_files = run_dir/<proto>_measurements.csv      # exact names, no suffix guessing
+pcap_file    = run_dir/pcap_measurements.csv
+outdir       = <run_dir>/charts                        # unless --outdir given
+```
+
+- Charts **only the selected run** — no cross-run mixing, no `--suffix`.
+- Unknown `--run` prints the available run ids (`common/runs.list_runs`) and exits.
+
+Legacy flat mode (`--csv-dir`, `--suffix`) is kept for old data:
 
 ```python
 suffix = args.suffix if args.suffix is not None else os.getenv("MEASUREMENT_SUFFIX")
 candidates = [s for s in [suffix, "_testing", ""] if s is not None]
-path = <csv_dir>/<base>_measurements<suffix>.csv   # first existing match
+path = <csv-dir>/<base>_measurements<suffix>.csv   # first existing match
 ```
-
-- Manual runs → `_testing` files (client) / plain `pcap_measurements.csv`
-  (pcap, which is also the explicit fallback at `charts.py:487-488`).
-- Runner runs → pass `--suffix <proto_profile>` (e.g. `--suffix http_good`) to
-  plot one profile's pcap + client data together.
 
 ---
 
@@ -139,9 +153,11 @@ path = <csv_dir>/<base>_measurements<suffix>.csv   # first existing match
 
 | Flag | Default | Effect |
 |---|---|---|
-| `--csv-dir` | `./output` (`OUTPUT_DIR` env) | where CSVs live |
-| `--outdir` | `output/charts` | where PNGs are written |
-| `--suffix` | env → `_testing` → plain | measurement set |
+| `--run` | — | run id under `--runs-dir` to chart (preferred; overrides `--csv-dir`/`--suffix`) |
+| `--runs-dir` | `./output` | directory containing the `runs/` tree (the `OUTPUT_DIR` parent) |
+| `--csv-dir` | `./output` (`OUTPUT_DIR` env) | legacy flat CSVs (ignored with `--run`) |
+| `--outdir` | `<run_dir>/charts` (with `--run`) / `output/charts` | where PNGs are written |
+| `--suffix` | env → `_testing` → plain | legacy measurement set (ignored with `--run`) |
 | `--protocols` | all | subset of `http mqtt coap` |
 | `--metrics` | all | subset of the 13 metric names above |
 | `--file-sizes` | all | only these sizes in MB |
@@ -161,9 +177,11 @@ path = <csv_dir>/<base>_measurements<suffix>.csv   # first existing match
 ### Examples
 
 ```bash
-python common/charts.py --suffix http_good --metrics goodput_mbps overhead_percentage
-python common/charts.py --file-sizes 1 5 20 50 --qos 2 --chart-type bar
-python common/charts.py --error none --agg median --no-overview
+python common/charts.py --run 20260818T201455_mqtt_harsh
+python common/charts.py --run <run_id> --metrics goodput_mbps overhead_percentage
+python common/charts.py --run <run_id> --file-sizes 1 5 20 50 --qos 2 --chart-type bar
+python common/charts.py --run <run_id> --error none --agg median --no-overview
+python common/charts.py --suffix http_good   # legacy flat mode
 ```
 
 ---

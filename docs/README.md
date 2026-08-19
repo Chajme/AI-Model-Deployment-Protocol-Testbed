@@ -27,12 +27,12 @@ protocols/benchmark_manager.py  ─►  common/packet_capture.py   (tcpdump in s
    │                                protocols/<proto>/client   (transfer)
    │                                common/packet_capture.py   (pcap copied out)
    └──► common/pcap_analyzer.py     (tshark analysis)
-          └──► output/write_csv.py  (pcap_measurements*.csv)
+          └──► output/write_csv.py  (pcap_measurements.csv)
 
-protocols/<proto>/client  ─►  output/write_csv.py  (…_measurements*.csv)
-                                  │
-                                  ▼
-                           common/charts.py  ─►  output/charts/*.png
+protocols/<proto>/client  ─►  output/write_csv.py  (…_measurements.csv)
+                                  │          every row + run.json land in
+                                  ▼          output/runs/<run_id>/  (common/runs.py)
+                           common/charts.py  ─►  <run>/charts/*.png  (--run <run_id>)
 ```
 
 **Quick orientation for new readers**

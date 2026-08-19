@@ -1,7 +1,12 @@
 import os
 
-# DATA_DIR = "/app/data"
-# OUTPUT_DIR = "/app/output"
+try:
+    import common.runs as runs
+except ImportError:  # pragma: no cover - project root not on sys.path yet
+    import sys
+
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import common.runs as runs
 
 DATA_DIR = os.getenv("DATA_DIR", "./data")
 OUTPUT_DIR = os.getenv("OUTPUT_DIR", "./output")
@@ -40,5 +45,11 @@ def get_file_path_input(filename):
     return os.path.join(DATA_DIR, filename)
 
 def output_directory_exists():
-    if not os.path.exists(DATA_DIR):
+    if not os.path.exists(OUTPUT_DIR):
         os.makedirs(OUTPUT_DIR, exist_ok=True)
+    # Ensure the active run directory exists so in-container writes (clients,
+    # servers) land inside the run even if the host creates it a moment later.
+    run_id = runs.active_run_id()
+    if run_id:
+        os.makedirs(runs.run_dir(OUTPUT_DIR, run_id), exist_ok=True)
+        os.makedirs(os.path.join(runs.run_dir(OUTPUT_DIR, run_id), "pcap"), exist_ok=True)
