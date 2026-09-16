@@ -144,6 +144,56 @@ def write_to_file_coap(data: list[dict]):
     ]
     write_to_csv(output_path, fieldnames, data)
 
+def write_to_file_amqp(data: list[dict]):
+    output_path = _measurement_file("amqp")
+    fieldnames = [
+        'protocol',
+        'side',
+        'file_size',
+        'sender_duration',
+        'receiver_duration',
+        'latency',
+        'goodput_mbps',
+        'integrity_ok',
+        'avg_cpu_usage',
+        'peak_ram_usage',
+        'energy_est',
+    ]
+    write_to_csv(output_path, fieldnames, data)
+
+def write_to_file_grpc(data: list[dict]):
+    output_path = _measurement_file("grpc")
+    fieldnames = [
+        'protocol',
+        'side',
+        'file_size',
+        'sender_duration',
+        'receiver_duration',
+        'latency',
+        'goodput_mbps',
+        'integrity_ok',
+        'avg_cpu_usage',
+        'peak_ram_usage',
+        'energy_est',
+    ]
+    write_to_csv(output_path, fieldnames, data)
+
+def write_to_file_lwm2m(data: list[dict]):
+    output_path = _measurement_file("lwm2m")
+    fieldnames = [
+        'protocol',
+        'side',
+        'file_size',
+        'download_duration',
+        'latency',
+        'goodput_mbps',
+        'integrity_ok',
+        'avg_cpu_usage',
+        'peak_ram_usage',
+        'energy_est',
+    ]
+    write_to_csv(output_path, fieldnames, data)
+
 def write_to_file_pcap(data: list[dict]):
     """Append pcap-derived analysis results (from common.pcap_analyzer)."""
     output_path = _measurement_file("pcap")

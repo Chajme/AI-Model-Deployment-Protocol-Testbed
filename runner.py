@@ -30,19 +30,25 @@ COMPOSE_FILE_AUTOMATED = "docker-compose.automated.yaml"
 BASE_ENV = os.environ.copy()
 
 # Reachability probes: (client service to exec into, host, tcp port).
-# CoAP is UDP and is handled with a fixed startup delay instead.
+# UDP protocols (CoAP/LwM2M) are handled with a fixed startup delay instead.
 PROBE = {
     "mqtt": ("mqtt-client-a", "mosquitto-broker", 1883),
     "http": ("http-client", "http-server", 8000),
+    "amqp": ("amqp-client-a", "rabbitmq-broker", 5672),
+    "grpc": ("grpc-client", "grpc-server", 50051),
 }
-COAP_SETTLE_SECONDS = 8
+UDP_SETTLE_SECONDS = {
+    "coap": 8,
+    "lwm2m": 8,
+}
 
 
 def wait_for_service(env, protocol, timeout=60):
     """Block until the protocol's server is reachable from its client container."""
-    if protocol == "coap":
-        print(f"  -> Waiting {COAP_SETTLE_SECONDS}s for CoAP server...")
-        time.sleep(COAP_SETTLE_SECONDS)
+    if protocol in UDP_SETTLE_SECONDS:
+        seconds = UDP_SETTLE_SECONDS[protocol]
+        print(f"  -> Waiting {seconds}s for {protocol.upper()} server...")
+        time.sleep(seconds)
         return
 
     service, host, port = PROBE[protocol]
@@ -69,7 +75,7 @@ def run_experiment(protocol, profile, run_id=None):
     # Every experiment writes to its own immutable run directory
     # (output/runs/<run_id>/) shared by the host harness and the containers.
     output_dir = os.path.abspath("output")
-    rid = runs.new_run(output_dir, protocol, profile, run_id=run_id)
+    rid = run_id or runs.run_id_for(protocol, profile)
 
     env = BASE_ENV.copy()
     env["COMPOSE_FILE"] = COMPOSE_FILE_AUTOMATED
@@ -78,12 +84,16 @@ def run_experiment(protocol, profile, run_id=None):
     env["MEASUREMENT_SUFFIX"] = f"{protocol}_{profile}"
     env["RUN_ID"] = rid
 
-    # Inherit the experiment environment so that run_protocol() (which runs in
-    # this process and drives the capture/analysis/CSV writing) sees the same
+    # Publish the experiment environment BEFORE creating the run: new_run()
+    # snapshots os.environ into the manifest, so setting it afterwards records
+    # the previous run's NETWORK_PROFILE / MEASUREMENT_SUFFIX (or empty for the
+    # first run). run_protocol() (which runs in this process and drives the
+    # capture/analysis/CSV writing) also needs to see the same
     # COMPOSE_FILE / COMPOSE_PROFILES / MEASUREMENT_SUFFIX / RUN_ID as the
-    # containers. Without this, pcap rows would land outside the run dir and
-    # mix every network profile together.
+    # containers, otherwise pcap rows land outside the run dir.
     os.environ.update(env)
+
+    runs.new_run(output_dir, protocol, profile, run_id=rid)
 
     # Sidecar marker lets containers (which lack RUN_ID) resolve the active run
     # through the output bind mount.

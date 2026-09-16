@@ -34,6 +34,16 @@ Each protocol gets its own bridge network with three roles:
 | `coap-client` | app (built) | `coap-net` | `sleep infinity` / `network_chaos.sh` | blockwise PUT uploader |
 | `coap-server` | app (built) | `coap-net` | `coap_server` / `network_chaos.sh` | aiocoap resource |
 | `coap-capture` | `nicolaka/netshoot` | `network_mode: service:coap-server` | `sleep infinity` | tcpdump lives here |
+| `amqp-client-a` | app (built) | `amqp-net` | `sleep infinity` / `network_chaos.sh` | sender (publisher confirms) |
+| `amqp-client-b` | app (built) | `amqp-net` | `amqp_receiver` (manual) / `network_chaos.sh` | receiver, always running |
+| `rabbitmq-broker` | `rabbitmq:3-alpine` | `amqp-net` | broker | queues `file/control`, `file/data` |
+| `amqp-capture` | `nicolaka/netshoot` | `network_mode: service:rabbitmq-broker` | `sleep infinity` | tcpdump lives here |
+| `grpc-client` | app (built) | `grpc-net` | `sleep infinity` / `network_chaos.sh` | client-streaming upload |
+| `grpc-server` | app (built) | `grpc-net` | `grpc_server` / `network_chaos.sh` | h2c on TCP 50051 |
+| `grpc-capture` | `nicolaka/netshoot` | `network_mode: service:grpc-server` | `sleep infinity` | tcpdump lives here |
+| `lwm2m-client` | app (built) | `lwm2m-net` | `sleep infinity` / `network_chaos.sh` | LwM2M device emulator (UDP 5683) |
+| `lwm2m-server` | app (built) | `lwm2m-net` | `lwm2m_server` / `network_chaos.sh` | registration + firmware repo |
+| `lwm2m-capture` | `nicolaka/netshoot` | `network_mode: service:lwm2m-server` | `sleep infinity` | tcpdump lives here |
 
 ### Why the capture sidecar shares the server's network namespace
 
@@ -54,13 +64,16 @@ endless capture that would have to be sliced up later.
 
 ## 2. Networks
 
-All three networks are plain Docker bridge drivers (`driver: bridge`):
+All six networks are plain Docker bridge drivers (`driver: bridge`):
 
 ```
 networks:
   mqtt-net:  { driver: bridge }
   http-net:  { driver: bridge }
   coap-net:  { driver: bridge }
+  amqp-net:  { driver: bridge }
+  grpc-net:  { driver: bridge }
+  lwm2m-net: { driver: bridge }
 ```
 
 No host port bindings exist anymore (1883 / 8080 / 5683 are **not** published).

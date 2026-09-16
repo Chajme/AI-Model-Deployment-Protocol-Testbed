@@ -16,16 +16,32 @@ pip install -r requirements-charts.txt
 
 ### Client-side metrics (`CLIENT_METRICS`)
 
-`fields` maps each protocol to its CSV column (MQTT has **no** CPU/RAM/energy):
+`fields` maps each protocol to its CSV column (MQTT has **no** CPU/RAM/energy;
+every other protocol populates all columns via `common/resource_monitor.py`):
 
-| Metric | Title | y-label | size-dep. | http col | coap col | mqtt col |
-|---|---|---|---|---|---|---|
-| `goodput_mbps` | Goodput (client-measured) | Mbps | ✓ | `goodput_mbps` | `goodput_mbps` | `goodput_mbps` |
-| `transfer_time` | Transfer time | seconds | ✓ | `time_to_transfer` | `time_to_transfer` | `sender_duration` |
-| `latency` | Latency | seconds | ✓ | `latency_tcp_rtt` | `latency` | `latency` |
-| `avg_cpu_pct` | Avg CPU usage | % | ✗ | `avg_cpu_usage` | `avg_cpu_usage` | — |
-| `peak_ram_mb` | Peak RAM | MB | ✗ | `peak_ram_usage` | `peak_ram_usage` | — |
-| `energy_j` | Energy estimate | J | ✗ | `energy_est` | `energy_est` | — |
+| Metric | Title | y-label | size-dep. | http col | coap col | mqtt col | amqp col | grpc col | lwm2m col |
+|---|---|---|---|---|---|---|---|---|---|
+| `goodput_mbps` | Goodput (client-measured) | Mbps | yes | `goodput_mbps` | `goodput_mbps` | `goodput_mbps` | `goodput_mbps` | `goodput_mbps` | `goodput_mbps` |
+| `transfer_time` | Transfer time | seconds | yes | `time_to_transfer` | `time_to_transfer` | `sender_duration` | `sender_duration` | `sender_duration` | `download_duration` |
+| `latency` | Latency | seconds | yes | `latency_tcp_rtt` | `latency` | `latency` | `latency` | `latency` | `latency` |
+| `avg_cpu_pct` | Avg CPU usage | % | no | `avg_cpu_usage` | `avg_cpu_usage` | — | `avg_cpu_usage` | `avg_cpu_usage` | `avg_cpu_usage` |
+| `peak_ram_mb` | Peak RAM | MB | no | `peak_ram_usage` | `peak_ram_usage` | — | `peak_ram_usage` | `peak_ram_usage` | `peak_ram_usage` |
+| `energy_j` | Energy estimate | J | no | `energy_est` | `energy_est` | — | `energy_est` | `energy_est` | `energy_est` |
+
+#### Metric semantics caveats
+
+- **Sender vs receiver rows.** MQTT, AMQP, gRPC and LwM2M record one row per
+  side per transfer. The `--side` flag (default `sender`) selects which rows
+  feed the charts; without filtering, sender and receiver values would average
+  together into meaningless midpoints (e.g. gRPC sender goodput counts from
+  stream start, receiver goodput only from first chunk arrival).
+- **`transfer_time` mixes push and pull semantics.** HTTP/CoAP/MQTT/AMQP/gRPC
+  measure an *upload* (including metadata + acks); LwM2M measures the
+  *blockwise download* only (registration and state exchange excluded), since
+  LwM2M is a pull-model firmware update. Compare accordingly.
+- **`latency` differs per protocol**: TCP connect RTT (HTTP), Ping RPC RTT
+  (gRPC), broker publish-confirm round trip (MQTT/AMQP), registration round
+  trip (LwM2M), CoAP discovery GET (CoAP).
 
 ### pcap metrics (`PCAP_METRICS`)
 
@@ -44,9 +60,20 @@ All size-dependent, single source (the run's `pcap_measurements.csv`):
 ### Overview dashboard
 
 `OVERVIEW_METRICS = [goodput_mbps, transfer_time, latency, avg_cpu_pct,
-wire_throughput_mbps, overhead_percentage, retransmissions, total_wire_bytes]` —
-rendered as a 3×3 grouped-bar grid (`overview.png`), deduplicated by title
+wire_throughput_mbps, overhead_percentage, retransmissions, total_wire_bytes]`
+rendered as a 3x3 grouped-bar grid (`overview.png`), deduplicated by title
 (client vs pcap `goodput` share a slot).
+
+### Overhead comparability across topologies
+
+The capture sidecar sits on the server/broker network namespace, so
+broker-topology protocols (MQTT, AMQP) record **both** data legs (publish +
+delivery) plus confirm/ack traffic in one pcap: wire bytes of roughly **2x the
+file size (~114% overhead)** at large sizes. Client/server-topology protocols
+(HTTP, gRPC) only carry a single data leg through their capture point
+(~5-13%). LwM2M sits between (~20%, blockwise per-block headers + acks).
+When comparing `overhead_percentage` across protocols, normalize for this
+topology difference first (see also protocol-transfers.md).
 
 ---
 

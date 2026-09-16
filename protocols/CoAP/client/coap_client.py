@@ -7,6 +7,7 @@ from aiocoap import Message, Context, PUT, GET
 
 from common.file_manager import load_binary_files
 from common.integrity_checker import sha256
+from common.resource_monitor import ResourceMonitor
 from output.write_csv import write_to_file_coap
 
 DATA_DIR   = "/app/data"
@@ -56,6 +57,9 @@ async def transfer_file(context: Context, filename: str) -> None:
     goodput_mbps  = 0.0
     transfer_time = 0.0
 
+    monitor = ResourceMonitor(sample_interval=0.01)
+    monitor.start()
+
     for attempt in range(MAX_RETRIES):
         try:
             request = Message(
@@ -75,12 +79,14 @@ async def transfer_file(context: Context, filename: str) -> None:
 
     if response is None:
         print(f"  Transfer failed after {MAX_RETRIES} attempts.")
+        monitor.stop()
         return
 
     # integrity_ok relies on the server verifying the checksum query parameter
     # and returning 4.00 Bad Request on mismatch; 2.04 Changed means the server
     # confirmed the file was saved with a matching checksum.
     integrity_ok = response.code.is_successful()
+    resource_stats = monitor.stop()
 
     print(f"Result: {response.code} | Time: {transfer_time:.2f}s | Retries: {retries}")
     print(f"Latency: {latency:.4f}s")
@@ -92,6 +98,9 @@ async def transfer_file(context: Context, filename: str) -> None:
         "latency":         f"{latency:.4f}",
         "goodput_mbps":    f"{goodput_mbps:.3f}",
         "integrity_ok":    integrity_ok,
+        "avg_cpu_usage":   f"{resource_stats['avg_cpu_pct']:.2f}%",
+        "peak_ram_usage":  f"{resource_stats['peak_rss_mb']:.2f} MB",
+        "energy_est":      f"{resource_stats['energy_j']:.4f}",
     }])
 
     await asyncio.sleep(3)

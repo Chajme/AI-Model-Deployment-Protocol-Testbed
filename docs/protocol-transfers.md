@@ -144,6 +144,113 @@ subtlety: an ACK **echoes the request's MID**, so raw MID counting over-counts).
 
 ---
 
+## AMQP — chunked publish over RabbitMQ with publisher confirms
+
+### Sender: `protocols/AMQP/client/amqp_client.py`
+
+- Broker: `rabbitmq-broker:5672` (`rabbitmq:3-alpine`).
+- Queues (same contract as MQTT topics):
+  - `file/control` — JSON metadata: `{filename, total_chunks, checksum}`
+  - `file/data` — raw 1 MiB binary chunks
+- **Reliability**: `channel.confirm_delivery()` — every `basic_publish` blocks
+  until the broker confirms (at-least-once, analogous to MQTT QoS 1). pika ≥1.1
+  raises `UnroutableError`/`NackError` on failure; success returns `None`.
+- **ACK latency**: timing the blocking metadata `basic_publish` yields a real
+  broker round-trip.
+
+### Receiver: `protocols/AMQP/receiver/amqp_receiver.py`
+
+- Persistent consumer on both queues with `basic_qos(prefetch_count=32)` to
+  bound memory during large transfers.
+- Reassembles chunks into `OUTPUT_DIR/<filename>` and verifies the SHA-256;
+  appends its own receiver row (`integrity_ok`) to `amqp_measurements.csv`.
+
+### Wire notes
+
+- tshark dissects AMQP natively (`-Y amqp`); the frame-type breakdown uses
+  `amqp.type`. RabbitMQ negotiates `frame_max` (131072 by default), so large
+  chunks are split into multiple body frames on the wire.
+- TCP-based: retransmission metrics come from the standard
+  `tcp.analysis.*` filter.
+
+> **Reading broker-topology overhead numbers:** for MQTT and AMQP the capture
+> sidecar shares the *broker's* network namespace, so each pcap contains both
+> data legs (publish + delivery) plus confirm/ack traffic. Wire bytes of
+> roughly **2x the file size (~114% overhead)** at large sizes are therefore
+> expected and consistent across both protocols. Client/server-topology
+> protocols (HTTP, gRPC) only carry one data leg through their capture point,
+> so their overhead percentages are not directly comparable to broker-based
+> ones without normalizing for the topology difference.
+
+---
+
+## gRPC — client-streaming upload over plaintext HTTP/2
+
+### Schema: `protocols/GRPC/proto/file_transfer.proto`
+
+- `Upload(stream Chunk) returns UploadResult` — client-streaming RPC.
+- `Chunk` is a `oneof { Metadata metadata | bytes data }`: chunk 1 carries
+  `{filename, total_size, total_chunks, checksum}`, the rest carry raw bytes.
+- `Ping(PingRequest) returns PingReply` — unary round-trip latency probe
+  (mirrors the HTTP TCP-RTT measurement).
+
+### Server: `protocols/GRPC/server/grpc_server.py`
+
+- Reassembles the stream into `OUTPUT_DIR/<filename>`, checks size + SHA-256,
+  and returns `UploadResult{integrity_ok, receiver_duration_s}` so both sides
+  log rows (`grpc_measurements.csv`).
+
+### Stub generation
+
+- Compiled during the docker build (`grpc_tools.protoc`) into `/opt/grpc_stubs`
+  — deliberately **outside** `/app`, because the compose stacks bind-mount
+  `./:/app` at runtime and would shadow stubs generated inside the image's
+  `/app`. Both server and client prepend that directory to `sys.path`
+  (falling back to `protocols/GRPC/proto/` for local runs).
+
+### Wire notes
+
+- Plaintext h2c is not auto-detected by tshark on custom ports (only via
+  HTTP-upgrade or TLS ALPN), so `PROTOCOL_CONFIG["grpc"]` adds
+  `decode_as: ["-d", "tcp.port==50051,http2"]`; the frame-type breakdown then
+  shows HTTP/2 frame types (`0` DATA, `1` HEADERS, `4` SETTINGS, `6` PING,
+  `8` WINDOW_UPDATE).
+
+---
+
+## LwM2M — firmware-update flow emulator over CoAP
+
+**This is a flow-level emulation**, not a full OMA LwM2M stack: it reproduces
+the wire patterns of an LwM2M firmware update using aiocoap (RFC 7252 +
+blockwise RFC 7959), without DTLS or the OMA TLV/CBOR serialization. It exists
+to measure the management-layer overhead *delta* against the raw CoAP blockwise
+benchmark above.
+
+### Flow (one run = one file)
+
+| Step | Message | Notes |
+|---|---|---|
+| 1 | Client → `POST coap://lwm2m-server/rd?ep=...&lt=86400` | registration; server answers `2.01 Created` with `Location: /rd/1` |
+| 2 | Client → `POST coap://lwm2m-server/update?file=...&checksum=...` | benchmark trigger |
+| 3 | Server → `PUT coap://<client>/5/0/1` | Package URI write (**server-initiated**) |
+| 4 | Client → `GET <package uri>` | blockwise pull of the model object |
+| 5 | Client → `PUT /rd/1/5/0/3` payload `"2"` | state report: Downloaded |
+| 6 | Server → `POST coap://<client>/5/0/2` | Update Execute |
+| 7 | Client → `PUT /rd/1/5/0/3` payload `"1"` | final result report |
+
+### Implementation notes
+
+- Both endpoints use one aiocoap context that serves their site **and**
+  originates requests, so server-initiated writes arrive on the device's
+  well-known UDP port 5683.
+- The firmware repository lives at `coap://lwm2m-server/fw?name=<filename>`
+  — a query parameter, not a path segment, because aiocoap's `Site` dispatches
+  unknown child paths to 4.04 before a plain `Resource` ever sees them.
+- Metrics (client-side row in `lwm2m_measurements.csv`): registration RTT,
+  blockwise download duration, goodput, integrity of the pulled object.
+
+---
+
 ## Shared helpers
 
 | Helper | Purpose |

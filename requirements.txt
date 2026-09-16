@@ -10,3 +10,10 @@ aiocoap
 linkheader
 flask
 psutil
+
+# AMQP
+pika
+
+# gRPC
+grpcio
+grpcio-tools

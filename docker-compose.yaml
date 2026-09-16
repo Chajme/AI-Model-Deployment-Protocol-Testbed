@@ -147,10 +147,155 @@ services:
       - ./output/pcap:/pcap
     entrypoint: [ "sleep", "infinity" ]
 
+  # ========================
+  # AMQP
+  # ========================
+  rabbitmq-broker:
+    image: rabbitmq:3-alpine
+    networks:
+      - amqp-net
+
+  # Sender -- idle, transfers are driven per file by the test harness.
+  amqp-client-a:
+    build: ./
+    cap_add:
+      - NET_ADMIN
+    entrypoint: ["sleep", "infinity"]
+    depends_on:
+      - rabbitmq-broker
+    volumes:
+      - ./output:/app/output
+      - ./:/app
+      - ./data:/app/data
+    networks:
+      - amqp-net
+    environment:
+      - MEASUREMENT_SUFFIX=_testing
+
+  # Receiver: stays up and waits for published chunks from client A.
+  amqp-client-b:
+    build: ./
+    cap_add:
+      - NET_ADMIN
+    command: python -m protocols.AMQP.receiver.amqp_receiver
+    depends_on:
+      - rabbitmq-broker
+    volumes:
+      - ./output:/app/output
+      - ./:/app
+    networks:
+      - amqp-net
+    environment:
+      - MEASUREMENT_SUFFIX=_testing
+
+  amqp-capture:
+    image: nicolaka/netshoot   # small image with tcpdump preinstalled
+    depends_on:
+      - rabbitmq-broker
+    network_mode: "service:rabbitmq-broker"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ./output/pcap:/pcap
+    entrypoint: [ "sleep", "infinity" ]
+
+  # ========================
+  # gRPC
+  # ========================
+  grpc-server:
+    build: .
+    cap_add:
+      - NET_ADMIN
+    command: python -m protocols.GRPC.server.grpc_server
+    volumes:
+      - ./output:/app/output
+      - ./:/app
+    networks:
+      - grpc-net
+
+  # Idle -- transfers are driven per file by the test harness (benchmark_manager.py).
+  grpc-client:
+    build: .
+    cap_add:
+      - NET_ADMIN
+    entrypoint: ["sleep", "infinity"]
+    depends_on:
+      - grpc-server
+    volumes:
+      - ./output:/app/output
+      - ./:/app
+      - ./data:/app/data
+    networks:
+      - grpc-net
+    environment:
+      - MEASUREMENT_SUFFIX=_testing
+
+  grpc-capture:
+    image: nicolaka/netshoot
+    depends_on:
+      - grpc-server
+    network_mode: "service:grpc-server"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ./output/pcap:/pcap
+    entrypoint: [ "sleep", "infinity" ]
+
+  # ========================
+  # LwM2M (CoAP-based emulator)
+  # ========================
+  lwm2m-server:
+    build: .
+    cap_add:
+      - NET_ADMIN
+    command: python -m protocols.LWM2M.server.lwm2m_server
+    volumes:
+      - ./output:/app/output
+      - ./:/app
+    networks:
+      - lwm2m-net
+
+  # Idle -- transfers are driven per file by the test harness.
+  lwm2m-client:
+    build: .
+    cap_add:
+      - NET_ADMIN
+    entrypoint: ["sleep", "infinity"]
+    depends_on:
+      - lwm2m-server
+    volumes:
+      - ./output:/app/output
+      - ./:/app
+      - ./data:/app/data
+    networks:
+      - lwm2m-net
+    environment:
+      - MEASUREMENT_SUFFIX=_testing
+
+  lwm2m-capture:
+    image: nicolaka/netshoot
+    depends_on:
+      - lwm2m-server
+    network_mode: "service:lwm2m-server"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ./output/pcap:/pcap
+    entrypoint: [ "sleep", "infinity" ]
+
 networks:
   mqtt-net:
     driver: bridge
   coap-net:
     driver: bridge
   http-net:
+    driver: bridge
+  amqp-net:
+    driver: bridge
+  grpc-net:
+    driver: bridge
+  lwm2m-net:
     driver: bridge

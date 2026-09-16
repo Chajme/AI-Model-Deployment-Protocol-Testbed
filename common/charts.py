@@ -58,9 +58,16 @@ if _PROJECT_ROOT not in sys.path:
 import common.runs as runs
 
 
-PROTOCOLS = ["http", "mqtt", "coap"]
+PROTOCOLS = ["http", "mqtt", "coap", "amqp", "grpc", "lwm2m"]
 PROTO_ORDER = {p: i for i, p in enumerate(PROTOCOLS)}
-COLORS = {"http": "#1f77b4", "mqtt": "#ff7f0e", "coap": "#2ca02c"}
+COLORS = {
+    "http": "#1f77b4",
+    "mqtt": "#ff7f0e",
+    "coap": "#2ca02c",
+    "amqp": "#d62728",
+    "grpc": "#9467bd",
+    "lwm2m": "#8c564b",
+}
 # MQTT QoS is rendered as a line style (or bar hatch) on the protocol color.
 QOS_STYLES = {None: "-", "1": "--", "2": ":"}
 QOS_HATCH = {None: None, "1": "//", "2": "xx"}
@@ -74,39 +81,48 @@ CLIENT_METRICS = {
         "ylabel": "Mbps",
         "size_dependent": True,
         "fields": {"http": "goodput_mbps", "coap": "goodput_mbps",
-                   "mqtt": "goodput_mbps"},
+                   "mqtt": "goodput_mbps", "amqp": "goodput_mbps",
+                   "grpc": "goodput_mbps", "lwm2m": "goodput_mbps"},
     },
     "transfer_time": {
         "title": "Transfer time",
         "ylabel": "seconds",
         "size_dependent": True,
         "fields": {"http": "time_to_transfer", "coap": "time_to_transfer",
-                   "mqtt": "sender_duration"},
+                   "mqtt": "sender_duration", "amqp": "sender_duration",
+                   "grpc": "sender_duration", "lwm2m": "download_duration"},
     },
     "latency": {
         "title": "Latency",
         "ylabel": "seconds",
         "size_dependent": True,
         "fields": {"http": "latency_tcp_rtt", "coap": "latency",
-                   "mqtt": "latency"},
+                   "mqtt": "latency", "amqp": "latency",
+                   "grpc": "latency", "lwm2m": "latency"},
     },
     "avg_cpu_pct": {
         "title": "Avg CPU usage",
         "ylabel": "%",
         "size_dependent": False,
-        "fields": {"http": "avg_cpu_usage", "coap": "avg_cpu_usage"},
+        "fields": {"http": "avg_cpu_usage", "coap": "avg_cpu_usage",
+                   "amqp": "avg_cpu_usage", "grpc": "avg_cpu_usage",
+                   "lwm2m": "avg_cpu_usage"},
     },
     "peak_ram_mb": {
         "title": "Peak RAM",
         "ylabel": "MB",
         "size_dependent": False,
-        "fields": {"http": "peak_ram_usage", "coap": "peak_ram_usage"},
+        "fields": {"http": "peak_ram_usage", "coap": "peak_ram_usage",
+                   "amqp": "peak_ram_usage", "grpc": "peak_ram_usage",
+                   "lwm2m": "peak_ram_usage"},
     },
     "energy_j": {
         "title": "Energy estimate",
         "ylabel": "J",
         "size_dependent": False,
-        "fields": {"http": "energy_est", "coap": "energy_est"},
+        "fields": {"http": "energy_est", "coap": "energy_est",
+                   "amqp": "energy_est", "grpc": "energy_est",
+                   "lwm2m": "energy_est"},
     },
 }
 
@@ -157,19 +173,25 @@ def _run_file(csv_dir, base):
 
 
 def _client_label(row, protocol):
+    """Size-only x label; the (protocol, qos) series key already separates
+    MQTT QoS levels, so the label must not (it would split MQTT into extra
+    x categories instead of grouping its bars at the same size)."""
     size = _to_number(row.get("file_size"))
-    label = f"{size:.3g} MB" if size is not None else "?"
-    if protocol == "mqtt":
-        qos = (row.get("qos") or "").strip()
-        return f"{label} | qos {qos}"
-    return label
+    return f"{size:.3g} MB" if size is not None else "?"
 
 
 def _pcap_label(row, protocol=None):
+    """Build a size label from file_size_bytes so the x axis is in MB.
+
+    Deriving labels from filenames ('250kb') made _label_sort_key extract the
+    bare number 250, which rendered as '250 MB' on line charts and sorted the
+    point after 50 MB.
+    """
+    size = _to_number(row.get("file_size_bytes"))
+    if size:
+        return f"{size / (1024 * 1024):.3g} MB"
     name = (row.get("filename") or row.get("label") or "?").strip()
-    name = name.replace("binary_file_", "").replace(".bin", "")
-    qos = (row.get("qos") or "").strip()
-    return f"{name}" + (f" | qos {qos}" if qos else "")
+    return name.replace("binary_file_", "").replace(".bin", "")
 
 
 def _size_mb_client(row):
@@ -230,9 +252,19 @@ def _collect(rows_by_protocol, field_by_protocol, label_fn, args, size_mb_fn=Non
     """
     Return {(protocol, qos): {x_label: [run values, ...]}} for one metric.
 
-    Applies the --protocols (caller), --qos, --mqtt-side and --file-sizes
+    Applies the --protocols (caller), --qos, --side and --file-sizes
     filters. The series key carries the MQTT QoS so it can be charted as a
     separate series; other protocols use qos=None.
+
+    The --side filter applies to ANY protocol whose rows carry a non-empty
+    `side` column (MQTT, AMQP, gRPC, LwM2M) -- without it, sender and
+    receiver rows would both feed the same series and average incompatible
+    measurements (e.g. gRPC sender goodput vs the receiver's
+    first-chunk-to-end goodput).
+
+    With the default --side auto, protocols that record sender rows use
+    them; protocols with a single other side (LwM2M logs side=client, the
+    pull-model downloader) keep their only rows instead of being dropped.
     """
     data = {}
     for protocol, rows in rows_by_protocol.items():
@@ -240,15 +272,27 @@ def _collect(rows_by_protocol, field_by_protocol, label_fn, args, size_mb_fn=Non
         if not field:
             continue
         series = defaultdict(lambda: defaultdict(list))
+
+        side_values = {(r.get("side") or "").strip() for r in rows}
+        side_values.discard("")
+        if args.side == "auto":
+            effective_side = (
+                "sender" if "sender" in side_values
+                else next(iter(side_values)) if len(side_values) == 1
+                else None
+            )
+        else:
+            effective_side = None if args.side == "both" else args.side
+
         for row in rows:
             qos = None
             if protocol == "mqtt":
-                side = (row.get("side") or "").strip()
-                if side and args.mqtt_side != "both" and side != args.mqtt_side:
-                    continue
                 qos = (row.get("qos") or "").strip() or None
                 if args.qos and qos and int(qos) not in args.qos:
                     continue
+            side = (row.get("side") or "").strip()
+            if effective_side and side and side != effective_side:
+                continue
             size = size_mb_fn(row) if size_mb_fn else None
             if args.file_sizes and size is not None and not any(
                     abs(size - s) < 1e-6 for s in args.file_sizes):
@@ -343,6 +387,9 @@ def _draw_bars(ax, series, args, legend=True):
                yerr=[elo, ehi] if args.error != "none" else None, capsize=2)
     ax.set_xticks(range(len(labels)))
     ax.set_xticklabels(labels)
+    # All-zero metrics (e.g. retransmissions on a clean network) otherwise
+    # get a nonsensical negative y range from matplotlib's auto padding.
+    ax.set_ylim(bottom=0)
 
 
 def _plot_bar(series, title, ylabel, outpath, args):
@@ -399,6 +446,10 @@ def _make_overview(figs, outpath, args):
         ax.set_title(title, fontsize=10)
         ax.set_ylabel(ylabel, fontsize=8)
         ax.tick_params(axis="x", labelsize=8, rotation=30)
+        # _draw_bars only sets bar labels; without an explicit legend call
+        # the overview panels give no hint which color is which protocol.
+        if len({key for d in data.values() for key in d}) > 1:
+            ax.legend(fontsize=6, loc="best")
     fig.suptitle("Benchmark overview")
     fig.tight_layout()
     fig.savefig(outpath, dpi=args.dpi)
@@ -446,9 +497,13 @@ def main():
                         help="Only plot these file sizes in MB (default: all).")
     parser.add_argument("--qos", nargs="+", type=int, default=None,
                         help="MQTT QoS levels to include (default: both).")
-    parser.add_argument("--mqtt-side", choices=["sender", "receiver", "both"],
-                        default="sender",
-                        help="Which MQTT row side to use (default: sender).")
+    parser.add_argument("--side", "--mqtt-side", dest="side",
+                        choices=["auto", "sender", "receiver", "both"],
+                        default="auto",
+                        help="Which row side to use for protocols that record "
+                             "sender/receiver rows (MQTT, AMQP, gRPC, LwM2M). "
+                             "auto: sender rows when present, else the only "
+                             "side recorded (default).")
     parser.add_argument("--chart-type", choices=["auto", "line", "bar"], default="auto",
                         help="auto: line for size-dependent metrics, bar for "
                              "size-invariant ones (default).")

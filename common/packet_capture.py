@@ -8,14 +8,25 @@ CAPTURE_SERVICES = {
     "mqtt": "mqtt-capture",
     "http": "http-capture",
     "coap": "coap-capture",
+    "amqp": "amqp-capture",
+    "grpc": "grpc-capture",
+    "lwm2m": "lwm2m-capture",
 }
 
 DEFAULT_IFACE = "eth0"
 
 # tcpdump kernel capture buffer in KiB. The default (~1 MiB) overflows and
-# drops frames during fast large-file bursts. 8 MiB gives tcpdump headroom
-# to absorb the burst while it drains to disk.
-TCPDUMP_BUFFER_KB = 8192
+# drops frames during fast large-file bursts. 32 MiB keeps even MTU-flood
+# bursts from dropping frames while tcpdump drains to disk (WSL2 veth paths
+# deliver in bursts that a smaller ring cannot absorb).
+TCPDUMP_BUFFER_KB = 32768
+
+# Grace period between the transfer finishing and SIGTERMing tcpdump. When
+# the client process exits, the transfer tail (final segments, acks,
+# connection teardown) may still be in flight or sitting in tcpdump's
+# userspace write buffer -- an immediate SIGTERM loses it from the pcap
+# (~5% of wire bytes on fast transfers, which turns overhead negative).
+CAPTURE_SETTLE_SECONDS = 2.0
 
 # Client containers that originate protocol traffic and must have their NIC
 # segmentation offloads (TSO/GSO) disabled so the capture shows real
@@ -27,6 +38,10 @@ OFFLOAD_CONTAINERS = {
     "mqtt": ["mqtt-client-a", "mqtt-client-b"],
     "http": ["http-client"],
     "coap": [],
+    "amqp": ["amqp-client-a", "amqp-client-b"],
+    "grpc": ["grpc-client"],
+    # LwM2M runs over UDP (no TSO/GSO), like coap.
+    "lwm2m": [],
 }
 
 OFFLOAD_SETTINGS = ["gro", "gso", "tso"]
@@ -134,6 +149,8 @@ def stop_capture_run(
     container.
     """
     service = _resolve_service(protocol)
+    # Let the transfer tail drain before stopping the capture.
+    time.sleep(CAPTURE_SETTLE_SECONDS)
     subprocess.run(
         ["docker", "compose", "exec", service, "pkill", "-TERM", "tcpdump"],
         check=True,

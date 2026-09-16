@@ -55,6 +55,21 @@ RUNNERS = {
         "module": "protocols.CoAP.client.coap_client",
         "has_qos": False,
     },
+    "amqp": {
+        "service": "amqp-client-a",
+        "module": "protocols.AMQP.client.amqp_client",
+        "has_qos": False,
+    },
+    "grpc": {
+        "service": "grpc-client",
+        "module": "protocols.GRPC.client.grpc_client",
+        "has_qos": False,
+    },
+    "lwm2m": {
+        "service": "lwm2m-client",
+        "module": "protocols.LWM2M.client.lwm2m_client",
+        "has_qos": False,
+    },
 }
 
 DEFAULT_MQTT_QOS = [1, 2]
@@ -80,6 +95,7 @@ def run_transfer(protocol: str, filename: str, qos: int | None = None, analyze: 
     outfile = start_capture_run(label, protocol)
     print(f"  -> Capturing to {outfile}")
 
+    transfer_failed = False
     try:
         command = [
             "docker", "compose", "exec", runner["service"],
@@ -90,10 +106,18 @@ def run_transfer(protocol: str, filename: str, qos: int | None = None, analyze: 
             command += ["--qos", str(qos)]
 
         subprocess.run(command, check=True)
+    except subprocess.CalledProcessError as e:
+        # One failed transfer must not abort the rest of the sweep; the client
+        # has already logged a failure row for this file.
+        transfer_failed = True
+        print(f"  -> WARNING: transfer process exited with code {e.returncode}")
     finally:
         stop_capture_run(protocol, outfile, runs.pcap_dir())
 
     print(f"  -> Capture stopped: {outfile}")
+
+    if transfer_failed:
+        return
 
     if not analyze:
         return

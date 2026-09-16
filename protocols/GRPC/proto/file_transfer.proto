@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package filetransfer;
+
+// AI model file transfer benchmark service.
+// Upload is client-streaming: the first Chunk carries metadata (filename,
+// size, chunk count, SHA-256), every following Chunk carries one raw slice
+// of the file. The server reassembles, verifies the checksum and returns
+// the transfer result.
+service FileTransfer {
+  // Lightweight round-trip latency probe (mirrors HTTP TCP-RTT measurement).
+  rpc Ping(PingRequest) returns (PingReply);
+
+  // Stream a binary file to the server.
+  rpc Upload(stream Chunk) returns (UploadResult);
+}
+
+message PingRequest {
+  int64 client_timestamp_ms = 1;
+}
+
+message PingReply {
+  int64 client_timestamp_ms = 1;
+  int64 server_timestamp_ms = 2;
+}
+
+message Metadata {
+  string filename = 1;
+  uint64 total_size = 2;
+  uint32 total_chunks = 3;
+  string checksum = 4;
+}
+
+message Chunk {
+  oneof payload {
+    Metadata metadata = 1;
+    bytes data = 2;
+  }
+}
+
+message UploadResult {
+  bool integrity_ok = 1;
+  double receiver_duration_s = 2;
+}

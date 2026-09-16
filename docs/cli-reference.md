@@ -11,7 +11,7 @@ Runs one or more transfers against an **already-running** compose stack. It is
 called directly for manual runs and by `runner.py` for the automated sweep.
 
 ```bash
-python protocols/benchmark_manager.py [--protocol mqtt http coap]
+python protocols/benchmark_manager.py [--protocol mqtt http coap amqp grpc lwm2m]
                                       [--file <name.bin>]
                                       [--qos 1 2]
                                       [--no-analyze]
@@ -19,7 +19,7 @@ python protocols/benchmark_manager.py [--protocol mqtt http coap]
 
 | Flag | Type | Default | Effect |
 |---|---|---|---|
-| `--protocol` | nargs+ (choices `mqtt http coap`) | all | which protocols to run |
+| `--protocol` | nargs+ (choices `mqtt http coap amqp grpc lwm2m`) | all | which protocols to run |
 | `--file` | str | all `data/*.bin` | a single payload file |
 | `--qos` | nargs+ int | `1 2` | MQTT QoS sweep (ignored for HTTP/CoAP) |
 | `--no-analyze` | flag | off | capture pcaps but skip tshark analysis + CSV row |
@@ -40,13 +40,13 @@ Behavior notes:
 ## 2. `runner.py` — automated protocol × profile sweep
 
 ```bash
-python runner.py [--protocols mqtt http coap]
+python runner.py [--protocols mqtt http coap amqp grpc lwm2m]
                  [--profiles good iot harsh mobile satellite]
 ```
 
 | Flag | Type | Default | Effect |
 |---|---|---|---|
-| `--protocols` | nargs+ (choices `http mqtt coap`) | all | protocols to sweep |
+| `--protocols` | nargs+ (choices `http mqtt coap amqp grpc lwm2m`) | all | protocols to sweep |
 | `--profiles` | nargs+ (choices from `network_chaos.sh`) | `[mobile]` | profiles to run |
 | `--run-id` | str | auto | explicit run id (must not already exist) |
 

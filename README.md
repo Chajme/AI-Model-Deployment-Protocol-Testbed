@@ -1,7 +1,8 @@
 # AI-Model-Deployment-Protocol-Testbed
 
-A **reproducible, containerized benchmark harness** that compares how three IoT
-protocols — **MQTT**, **HTTP**, and **CoAP** — move AI-model-sized binary files
+A **reproducible, containerized benchmark harness** that compares how six IoT
+protocols — **MQTT**, **HTTP**, **CoAP**, **AMQP**, **gRPC**, and **LwM2M**
+(CoAP-based emulator) — move AI-model-sized binary files
 (250 KB up to 200 MB; generate the payloads with `data/binary_file_generator.py`,
 whose sizes are editable at the bottom) over a network. It measures each transfer **twice**:
 
@@ -19,9 +20,11 @@ results are comparable across machines without needing a real network.
 
 ## Features
 
-- **Three protocols, one harness** — MQTT (1 MB chunked publish, QoS 1/2 sweep),
-  HTTP (streaming PUT), CoAP (blockwise PUT) against real servers/brokers in
-  Docker.
+- **Six protocols, one harness** — MQTT (1 MB chunked publish, QoS 1/2 sweep),
+  HTTP (streaming PUT), CoAP (blockwise PUT), AMQP (chunked publish to RabbitMQ
+  with publisher confirms), gRPC (client-streaming upload over h2c), and LwM2M
+  (registration + package-URI + blockwise pull state machine) against real
+  servers/brokers in Docker.
 - **Per-transfer packet capture** — a `netshoot` sidecar shares the server's
   network namespace; `tcpdump` is started/stopped per run and the resulting
   pcap is analyzed with tshark.
@@ -47,7 +50,8 @@ results are comparable across machines without needing a real network.
 
 ## Architecture
 
-Three isolated Docker bridge networks — `mqtt-net`, `http-net`, `coap-net` —
+Six isolated Docker bridge networks — `mqtt-net`, `http-net`, `coap-net`,
+`amqp-net`, `grpc-net`, `lwm2m-net` —
 each containing a **client**, a **server** (or **broker**), and a **capture
 sidecar**. The sidecar (`nicolaka/netshoot`) uses `network_mode:
 service:<server>` so it sees traffic exactly as the server does.

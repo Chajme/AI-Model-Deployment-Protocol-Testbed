@@ -20,4 +20,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+# Compile the gRPC protobuf stubs OUTSIDE /app -- the compose stacks
+# bind-mount ./ over /app at runtime, which would otherwise shadow the
+# generated pb2 modules.
+RUN mkdir -p /opt/grpc_stubs && python -m grpc_tools.protoc -I./protocols/GRPC/proto \
+    --python_out=/opt/grpc_stubs \
+    --grpc_python_out=/opt/grpc_stubs \
+    ./protocols/GRPC/proto/file_transfer.proto
+
 ENV PYTHONUNBUFFERED=1

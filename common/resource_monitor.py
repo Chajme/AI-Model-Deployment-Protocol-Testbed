@@ -66,11 +66,12 @@ class ResourceMonitor:
         avg_cpu_pct = avg_cpu_pct / (self.cpu_count or 1)
         peak_rss_mb  = max(self._rss_samples) / (1024 ** 2) if self._rss_samples else 0.0
 
-        # Normalise CPU % to a 0-1 fraction of one core,
-        # then multiply by TDP and duration for a joule estimate.
+        # avg_cpu_pct is already normalised to a single core (0-100) above,
+        # so turn it straight into a 0-1 fraction of one core, then multiply
+        # by TDP and duration for a joule estimate. Dividing by the core count
+        # again here would under-report energy by ~num_cores.
         # This is an approximation — RAPL (see Option 2) is more accurate.
-        num_cores     = psutil.cpu_count(logical=True) or 1
-        cpu_fraction  = (avg_cpu_pct / 100.0) / num_cores
+        cpu_fraction  = avg_cpu_pct / 100.0
         energy_j      = cpu_fraction * self.DEFAULT_TDP_WATTS * duration_s
 
         return {

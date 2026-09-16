@@ -24,6 +24,25 @@ PROTOCOL_CONFIG = {
         "type_fields": ["coap.code"],
         "is_tcp": False,
     },
+    "amqp": {
+        "filter": "amqp",
+        "type_fields": ["amqp.type"],
+        "is_tcp": True,
+    },
+    "grpc": {
+        "filter": "http2",
+        "type_fields": ["http2.type"],
+        "is_tcp": True,
+        # Plaintext h2c is not auto-detected on custom ports (only via
+        # HTTP-upgrade or TLS ALPN), so tell tshark explicitly.
+        "decode_as": ["-d", "tcp.port==50051,http2"],
+    },
+    # LwM2M runs over CoAP, so the wire analysis is identical to coap.
+    "lwm2m": {
+        "filter": "coap",
+        "type_fields": ["coap.code"],
+        "is_tcp": False,
+    },
 }
 
 RETRANSMISSION_FILTER = (
@@ -55,9 +74,11 @@ def resolve_tshark() -> str:
     return discovered
 
 
-def run_tshark(pcap_file, display_filter=None, fields=None):
+def run_tshark(pcap_file, display_filter=None, fields=None, extra_args=None):
     """
     Run tshark and return rows of extracted fields.
+
+    extra_args: optional raw tshark arguments (e.g. decode-as hints).
     """
     command = [
         resolve_tshark(),
@@ -72,6 +93,9 @@ def run_tshark(pcap_file, display_filter=None, fields=None):
         "-E",
         "header=y",
     ]
+
+    if extra_args:
+        command.extend(extra_args)
 
     if display_filter:
         command.extend(["-Y", display_filter])
@@ -126,6 +150,7 @@ def analyze_pcap(
         Dictionary containing the measurements.
     """
     cfg = _validate_protocol(protocol)
+    decode_as = cfg.get("decode_as")
 
     pcap_file = Path(pcap_file)
 
@@ -144,6 +169,7 @@ def analyze_pcap(
             "frame.time_relative",
             "ip.proto",
         ],
+        extra_args=decode_as,
     )
 
     lines = output.strip().splitlines()
@@ -187,6 +213,7 @@ def analyze_pcap(
         pcap_file,
         display_filter=cfg["filter"],
         fields=["frame.number", "frame.len"] + cfg["type_fields"],
+        extra_args=decode_as,
     )
 
     proto_lines = proto_output.strip().splitlines()
@@ -228,6 +255,7 @@ def analyze_pcap(
             pcap_file,
             display_filter=RETRANSMISSION_FILTER,
             fields=["frame.number"],
+            extra_args=decode_as,
         )
 
         retransmission_lines = [
