@@ -165,7 +165,7 @@ removes **named volumes only** — CSVs and pcaps survive.
 | Protocol transfers | inside client containers (HTTP/MQTT/CoAP libs are container-only) |
 | Packet capture | `tcpdump` inside the capture sidecar |
 | Capture orchestration (start/stop/copy) | host — `common/packet_capture.py` via `docker compose exec` |
-| pcap analysis | host — `common/pcap_analyzer.py` via local `tshark` |
+| pcap analysis | host — `common/pcap_analyzer.py`; host `tshark`, or containerized `tshark` from `netshoot` when absent |
 | CSV writing | client containers for runtime metrics; host harness for pcap metrics |
 | Resource sampling (CPU/RAM/energy) | inside the client process — `common/resource_monitor.py` |
 | Chart generation | host — `common/charts.py` (matplotlib) |

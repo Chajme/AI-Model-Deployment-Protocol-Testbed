@@ -164,7 +164,7 @@ to 15 W and can be overridden with the `CPU_TDP_WATTS` environment variable.
 | Docker Engine 24+ with Compose v2 | containers, networking, `tc` (`docker compose version`) |
 | Backend with `CAP_NET_ADMIN` | chaos profiles use Linux `tc` — Docker Desktop **WSL2** backend on Windows, or native Linux |
 | Python 3.11+ (with `venv`) | host harness + data generator |
-| Wireshark CLI `tshark` | pcap analysis (auto-detected on PATH or `C:\Program Files\Wireshark`) |
+| Wireshark CLI `tshark` | pcap analysis — **optional**: auto-detected on PATH / `C:\Program Files\Wireshark`; otherwise the analyzer runs `tshark` inside the `netshoot` container (Docker is already required) |
 
 No host-side MQTT/HTTP/CoAP libraries are required — everything protocol-related
 runs inside the containers. Chart generation additionally needs matplotlib
@@ -247,8 +247,10 @@ binaries, charts, `.venv`) are git-ignored — the repo tracks source only.
 
 ## Charts
 
-`common/charts.py` charts one run via `--run <run_id>` (PNGs go to
-`<run>/charts/` by default), with a legacy `--csv-dir`/`--suffix` fallback:
+`common/charts.py` charts one run via `--run <run_id>` or merges several via
+`--runs <id> <id> ...` (per-protocol runs of one sweep, e.g. all six `_iot`
+runs) (PNGs go to `<run>/charts/` by default, `output/charts/` for `--runs`),
+with a legacy `--csv-dir`/`--suffix` fallback:
 
 - **Line charts** for size-dependent metrics (goodput, transfer time, latency,
   overhead %, bytes, packets, retransmissions) — x = file size (log scale),
@@ -256,8 +258,9 @@ binaries, charts, `.venv`) are git-ignored — the repo tracks source only.
   aggregated (mean) with a shaded min–max band.
 - **Grouped bar charts** for CPU/RAM/energy and the overview dashboard.
 
-Selection: `--run`, `--runs-dir`, `--protocols`, `--metrics`, `--file-sizes`,
-`--qos`, `--mqtt-side`, `--no-client`, `--no-pcap`, `--no-overview`.
+Selection: `--run`, `--runs`, `--runs-dir`, `--protocols`, `--metrics`,
+`--file-sizes`, `--qos`, `--mqtt-side`, `--no-client`, `--no-pcap`,
+`--no-overview`.
 Styling: `--chart-type auto|line|bar`, `--agg mean|median|min|max`,
 `--error none|minmax|std|q90`, `--x-scale`, `--y-scale`, `--dpi`, `--figsize`.
 
@@ -286,7 +289,9 @@ goodput_mbps overhead_percentage`
 The full symptom → fix table lives in **TUTORIAL.md §8**. Common items:
 
 - `service '...-capture' is not running` → `docker compose up -d` first.
-- pcap analysis `WinError 2` → install Wireshark / add it to PATH (auto-detected).
+- pcap analysis `WinError 2` / `tshark not found` → with Docker running,
+  analysis falls back to `tshark` inside the `netshoot` container; install
+  Wireshark only if you prefer host-native tshark.
 - `RTNETLINK answers: Operation not permitted` → Docker backend without
   NET_ADMIN; use Docker Desktop **WSL2** backend (Windows) or native Linux.
 - `capture looks incomplete ...` warning → dropped frames during capture;

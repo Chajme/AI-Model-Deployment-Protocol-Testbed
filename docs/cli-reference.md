@@ -33,7 +33,8 @@ Behavior notes:
 - Environment it reads: `DATA_DIR` (`./data`), `OUTPUT_DIR` (defaults to
   `./output`), `NETWORK_PROFILE` (recorded in the manifest), `RUN_ID` (or the
   `.active_run` marker).
-- Expects `docker` and `tshark` on the host, and the compose stack up.
+- Expects `docker` (and the compose stack up). `tshark` is used from the host
+  if present, otherwise analysis runs in the `netshoot` container.
 
 ---
 

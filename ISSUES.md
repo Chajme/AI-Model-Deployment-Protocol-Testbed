@@ -94,22 +94,6 @@ would change the wire profile and should be a deliberate choice).
 
 ---
 
-## OPEN-5: merging runs for combined charts silently drops pcap rows
-
-**Severity:** low (tooling) · **Affects:** legacy flat `--csv-dir` chart mode
-**Status:** OPEN
-
-Every run writes its own `pcap_measurements.csv`; copying several runs'
-CSVs into one flat directory for a combined chart overwrites the file (same
-filename), leaving pcap panels with only the last-copied protocol's rows.
-Client-side CSVs are protocol-prefixed and merge fine.
-
-**Suggested fix:** document a merge snippet (header + all bodies), or teach
-`charts.py --runs-dir` a multi-run mode that concatenates pcap CSVs from
-several run dirs.
-
----
-
 ## FIXED-1: sender/receiver rows averaged into one series
 
 Charts' `_collect()` only filtered MQTT by row side; AMQP/gRPC CSVs contain
@@ -154,6 +138,17 @@ Two stacked causes, both fixed earlier in August 2026:
 
 `grpc-server`/`lwm2m-server` lacked `NETWORK_PROFILE` env (see OPEN-3 —
 same root cause, fixed for the new services only per scope decision).
+
+## FIXED-7: merging runs for combined charts silently dropped pcap rows
+
+Every run writes its own `pcap_measurements.csv`; copying several runs' CSVs
+into one flat directory for a combined chart overwrote the file (same
+filename), leaving pcap panels with only the last-copied protocol's rows.
+Fixed by adding `charts.py --runs <id> <id> ...`: client CSVs (already
+protocol-prefixed) and every listed run's pcap CSV are read and concatenated,
+so per-protocol runs of one sweep chart together. `--outdir` defaults to
+`output/charts` in multi-run mode; row-level `run_id`/`network_profile`
+columns keep the merged data self-describing.
 
 ---
 

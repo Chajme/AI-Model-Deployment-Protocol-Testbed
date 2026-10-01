@@ -41,12 +41,19 @@ The analyzed file isn't the one captured, or the capture never started.
 - Check the analyzer's filter matches the traffic (`-Y mqtt`/`http`/`coap`) —
   CoAP is dissected on UDP 5683 by default; the server binds `0.0.0.0:5683`.
 
-### `pcap analysis failed: [WinError 2] The system cannot find the file specified`
+### `pcap analysis failed: ... tshark not found`
 
-Host `tshark` not found. `resolve_tshark()` checks PATH then
-`C:\Program Files\Wireshark\tshark.exe` etc. (common/pcap_analyzer.py).
+Neither a host `tshark` nor the container fallback is usable.
 
-Fix: install Wireshark, or add its folder to PATH.
+`run_tshark()` (common/pcap_analyzer.py) first looks for a host `tshark`
+(PATH, then `C:\Program Files\Wireshark\tshark.exe` etc.). If none exists it
+runs `tshark` inside the `nicolaka/netshoot` image with the pcap directory
+mounted read-only at `/pcaps` — that image is already used for captures and
+ships tshark, so no host install is needed.
+
+Fix: install Wireshark for host-native analysis, or ensure Docker can run the
+fallback: `docker run --rm --entrypoint tshark nicolaka/netshoot --version`.
+Override the image with `TSHARK_CONTAINER_IMAGE` if needed.
 
 ### `tshark: Some fields aren't valid: coap.messageid`
 

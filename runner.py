@@ -122,6 +122,23 @@ def run_experiment(protocol, profile, run_id=None):
         runs.clear_marker(output_dir)
 
 
+def ensure_payloads() -> None:
+    """Fail fast (before building/starting anything) when no .bin payloads exist.
+
+    Every transfer needs the host-side ``data/*.bin`` files; without them the
+    sweep cannot run, so surface an actionable message instead of a traceback
+    deep inside the first protocol.
+    """
+    from common.file_manager import DATA_DIR, load_binary_files
+
+    try:
+        load_binary_files()
+    except Exception as e:
+        print(f"\nERROR: {e}")
+        print(f"(payloads are read from '{os.path.abspath(DATA_DIR)}')")
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run automated protocol benchmarks.")
     parser.add_argument(
@@ -148,14 +165,32 @@ def main():
         print("Nothing to run.")
         return
 
+    ensure_payloads()
+
     build_cmd = ["docker", "compose", "-f", COMPOSE_FILE_AUTOMATED]
     for protocol in args.protocols:
         build_cmd += ["--profile", protocol]
     build_cmd += ["build"]
     subprocess.run(build_cmd, check=True)
 
+    failures = []
     for protocol, profile in itertools.product(args.protocols, args.profiles):
-        run_experiment(protocol, profile, run_id=args.run_id)
+        try:
+            run_experiment(protocol, profile, run_id=args.run_id)
+        except Exception as e:
+            # One protocol/profile failing (e.g. a stack that won't come up)
+            # must not abort the rest of the sweep, otherwise a single bad
+            # combination hides the state of every remaining one.
+            failures.append((protocol, profile, e))
+            print(f"\n!!! {protocol.upper()} | {profile} FAILED: {e}")
+
+    if failures:
+        print("\n=== Sweep summary (failures) ===")
+        for protocol, profile, error in failures:
+            print(f"  FAILED  {protocol}/{profile}: {error}")
+        sys.exit(1)
+
+    print("\nAll runs completed.")
 
 
 if __name__ == "__main__":

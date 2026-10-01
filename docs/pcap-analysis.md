@@ -9,16 +9,34 @@ retransmission logic in detail.
 
 ## 1. tshark resolution and invocation
 
+`run_tshark()` prefers a **host** tshark and otherwise runs the same query
+**inside the `nicolaka/netshoot` container** (the image the capture sidecars
+already use, which ships tshark). This makes pcap analysis work on hosts
+without Wireshark installed.
+
 ```python
-def resolve_tshark():
-    # 1. PATH lookup
+_find_host_tshark():
+    # 1. PATH lookup (shutil.which)
     # 2. fallback candidates:
     #    C:\Program Files\Wireshark\tshark.exe
     #    C:\Program Files (x86)\Wireshark\tshark.exe
     #    /usr/bin/tshark
     #    /usr/sbin/tshark
-    # raises FileNotFoundError if none found
+    # returns None if not found
+
+# container fallback (host tshark absent):
+docker run --rm --network none \
+    -v <pcap-dir>:/pcaps:ro \
+    --entrypoint tshark nicolaka/netshoot \
+    -r /pcaps/<file> -T fields -E separator=, -E quote=d -E header=y \
+    [-Y <display filter>] [-e field ...]
 ```
+
+`resolve_tshark()` still returns the host path when present and raises
+`FileNotFoundError` otherwise (kept for callers that specifically need the
+host binary); `run_tshark()` no longer requires it. `tshark_version()` records
+whichever binary is actually used in the run manifest. Override the fallback
+image with the `TSHARK_CONTAINER_IMAGE` environment variable.
 
 Every query uses the same base flags:
 

@@ -147,7 +147,7 @@ def _error_bounds(values, error): # none | minmax (default) | std | q90
 
 ---
 
-## 6. Data source (`--run` preferred, legacy fallback)
+## 6. Data source (`--run` / `--runs` preferred, legacy fallback)
 
 Run mode is the default workflow:
 
@@ -163,8 +163,23 @@ pcap_file    = run_dir/pcap_measurements.csv
 outdir       = <run_dir>/charts                        # unless --outdir given
 ```
 
-- Charts **only the selected run** — no cross-run mixing, no `--suffix`.
-- Unknown `--run` prints the available run ids (`common/runs.list_runs`) and exits.
+`--runs <id> <id> ...` merges several run directories into one chart set. This
+is the way to compare the per-protocol runs of one sweep (e.g. one `_iot` run
+per protocol): client CSVs are protocol-prefixed so they concatenate cleanly,
+and the pcap CSVs — which all share the filename `pcap_measurements.csv` and
+would overwrite each other in the legacy flat layout — are read from every run
+in turn. `run_id` / `network_profile` stay as row columns, so the merged data
+remains self-describing.
+
+```bash
+python common/charts.py --runs 20260929T134410_mqtt_iot 20260929T160534_http_iot
+```
+
+- Single `--run` charts **only that run** — no cross-run mixing, no `--suffix`;
+  output defaults to `<run_dir>/charts`.
+- `--runs` (two or more) charts all listed runs and defaults `--outdir` to
+  `output/charts` (the flat `output/` parent holds no run dir to nest under).
+- Unknown run ids print the available runs (`common/runs.list_runs`) and exit.
 
 Legacy flat mode (`--csv-dir`, `--suffix`) is kept for old data:
 
@@ -181,6 +196,7 @@ path = <csv-dir>/<base>_measurements<suffix>.csv   # first existing match
 | Flag | Default | Effect |
 |---|---|---|
 | `--run` | — | run id under `--runs-dir` to chart (preferred; overrides `--csv-dir`/`--suffix`) |
+| `--runs` | — | several run ids to merge into one chart set (overrides `--run`/`--csv-dir`/`--suffix`) |
 | `--runs-dir` | `./output` | directory containing the `runs/` tree (the `OUTPUT_DIR` parent) |
 | `--csv-dir` | `./output` (`OUTPUT_DIR` env) | legacy flat CSVs (ignored with `--run`) |
 | `--outdir` | `<run_dir>/charts` (with `--run`) / `output/charts` | where PNGs are written |

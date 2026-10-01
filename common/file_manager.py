@@ -13,7 +13,10 @@ OUTPUT_DIR = os.getenv("OUTPUT_DIR", "./output")
 
 def load_binary_files():
     if not os.path.exists(DATA_DIR):
-        raise  Exception("Error: Directory '{DATA_DIR}' does not exist.")
+        raise FileNotFoundError(
+            f"Data directory '{DATA_DIR}' does not exist. "
+            "Generate payloads with: python data/binary_file_generator.py"
+        )
 
     files = [
         f for f in os.listdir(DATA_DIR)
@@ -21,7 +24,10 @@ def load_binary_files():
     ]
 
     if not files:
-        raise  Exception("No bin files found in '{DATA_DIR}'.")
+        raise FileNotFoundError(
+            f"No .bin payloads found in '{DATA_DIR}'. "
+            "Generate them with: python data/binary_file_generator.py"
+        )
 
     files.sort(key=lambda f: os.path.getsize(os.path.join(DATA_DIR, f)))
 

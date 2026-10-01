@@ -13,7 +13,10 @@
 
     Selection:
       --run <id> selects one run directory (output/runs/<id>/) and charts its
-      data. Alternatively --csv-dir/--suffix select the legacy flat layout.
+      data. --runs <id> <id> ... charts several run directories together
+      (one series per protocol, rows from every listed run), which is how
+      per-protocol runs of the same sweep are compared/composed into combined
+      charts. Alternatively --csv-dir/--suffix select the legacy flat layout.
       --protocols / --qos / --mqtt-side / --file-sizes / --metrics narrow down
       which metrics are charted.
 
@@ -23,6 +26,7 @@
     Usage (run from the project root):
         python common/charts.py
         python common/charts.py --run 20260818T201455_mqtt_harsh
+        python common/charts.py --runs 20260929T134410_mqtt_iot 20260929T160534_http_iot
         python common/charts.py --runs-dir output --run 20260818T201455_mqtt_harsh
         python common/charts.py --protocols http mqtt
         python common/charts.py --metrics goodput_mbps overhead_percentage
@@ -472,6 +476,12 @@ def main():
     parser.add_argument("--run", default=None,
                         help="Run id under --runs-dir to chart (preferred). "
                              "Overrides --csv-dir/--suffix.")
+    parser.add_argument("--runs", nargs="+", default=None,
+                        help="Several run ids under --runs-dir to chart together: "
+                             "rows from every listed run are merged, giving one "
+                             "series per protocol/QoS (the usual way to compare "
+                             "per-protocol runs of one sweep). Overrides --run and "
+                             "--csv-dir/--suffix.")
     parser.add_argument("--runs-dir", default=DEFAULT_CSV_DIR,
                         help="Directory containing the runs/ tree, i.e. the OUTPUT_DIR "
                              "parent (default: ./output).")
@@ -527,23 +537,31 @@ def main():
     args.figsize = _parse_figsize(args.figsize)
 
     # ------------------------------------------------------------------
-    # Data source: a single run directory (preferred) or the legacy flat CSVs.
+    # Data source: one or more run directories (preferred) or the legacy
+    # flat CSVs. `csv_dirs` is always a list; run mode merges the listed
+    # runs, legacy mode has a single directory.
     # ------------------------------------------------------------------
-    if args.run is not None:
-        if not runs.read_manifest(args.runs_dir, args.run):
-            available = runs.list_runs(args.runs_dir)
-            hint = " Available runs:\n  " + "\n  ".join(available) if available else ""
-            sys.exit(f"No such run: {args.run!r} under {args.runs_dir!r}.{hint}")
-        csv_dir = runs.run_dir(args.runs_dir, args.run)
-        outdir = args.outdir or os.path.join(csv_dir, "charts")
-        print(f"Run:    {args.run}")
+    run_ids = args.runs or ([args.run] if args.run is not None else None)
+    if run_ids:
+        csv_dirs = []
+        for run_id in run_ids:
+            if not runs.read_manifest(args.runs_dir, run_id):
+                available = runs.list_runs(args.runs_dir)
+                hint = " Available runs:\n  " + "\n  ".join(available) if available else ""
+                sys.exit(f"No such run: {run_id!r} under {args.runs_dir!r}.{hint}")
+            csv_dirs.append(runs.run_dir(args.runs_dir, run_id))
+        outdir = args.outdir or (
+            os.path.join(csv_dirs[0], "charts") if len(csv_dirs) == 1
+            else DEFAULT_OUT_DIR
+        )
+        print(f"Runs:    {', '.join(run_ids)}")
     else:
-        csv_dir = args.csv_dir
+        csv_dirs = [args.csv_dir]
         outdir = args.outdir or DEFAULT_OUT_DIR
 
     os.makedirs(outdir, exist_ok=True)
 
-    print(f"CSV dir: {csv_dir}")
+    print(f"CSV dir: {', '.join(csv_dirs)}")
     print(f"Output:  {outdir}")
 
     # ------------------------------------------------------------------
@@ -551,17 +569,27 @@ def main():
     # ------------------------------------------------------------------
     client_rows = {}
     for protocol in args.protocols:
-        if args.run is not None:
-            path = _run_file(csv_dir, protocol)
+        rows = []
+        if run_ids:
+            for csv_dir in csv_dirs:
+                path = _run_file(csv_dir, protocol)
+                if not path:
+                    continue
+                print(f"  using {os.path.join(os.path.basename(csv_dir), os.path.basename(path))}")
+                rows.extend(_csv_rows(path))
+            if not rows:
+                print(f"  (missing) {protocol}_measurements.csv")
         else:
             suffix = args.suffix if args.suffix is not None else os.getenv("MEASUREMENT_SUFFIX")
             candidates = [s for s in [suffix, "_testing", ""] if s is not None]
-            path = _resolve_file(csv_dir, protocol, candidates)
-        if not path:
-            print(f"  (missing) {protocol}_measurements*.csv")
-            continue
-        print(f"  using {os.path.basename(path)}")
-        client_rows[protocol] = list(_csv_rows(path))
+            path = _resolve_file(csv_dirs[0], protocol, candidates)
+            if not path:
+                print(f"  (missing) {protocol}_measurements*.csv")
+            else:
+                print(f"  using {os.path.basename(path)}")
+                rows.extend(_csv_rows(path))
+        if rows:
+            client_rows[protocol] = rows
 
     client_figs = []
     if not args.no_client:
@@ -579,20 +607,27 @@ def main():
     # ------------------------------------------------------------------
     pcap_rows = None
     if not args.no_pcap:
-        if args.run is not None:
-            pcap_path = _run_file(csv_dir, "pcap")
+        if run_ids:
+            pcap_paths = [
+                path for csv_dir in csv_dirs
+                if (path := _run_file(csv_dir, "pcap"))
+            ]
         else:
             suffix = args.suffix if args.suffix is not None else os.getenv("MEASUREMENT_SUFFIX")
             candidates = [s for s in [suffix, "_testing", ""] if s is not None]
-            pcap_path = _resolve_file(csv_dir, "pcap", candidates) or os.path.join(
-                csv_dir, "pcap_measurements.csv")
-        if pcap_path and os.path.isfile(pcap_path):
-            print(f"  using {os.path.basename(pcap_path)}")
+            pcap_paths = [
+                _resolve_file(csv_dirs[0], "pcap", candidates)
+                or os.path.join(csv_dirs[0], "pcap_measurements.csv")
+            ]
+        pcap_paths = [p for p in pcap_paths if p and os.path.isfile(p)]
+        if pcap_paths:
             pcap_rows = {p: [] for p in PROTOCOLS}
-            for row in _csv_rows(pcap_path):
-                protocol = (row.get("protocol") or "").strip().lower()
-                if protocol in args.protocols:
-                    pcap_rows[protocol].append(row)
+            for pcap_path in pcap_paths:
+                print(f"  using {os.path.basename(pcap_path)}")
+                for row in _csv_rows(pcap_path):
+                    protocol = (row.get("protocol") or "").strip().lower()
+                    if protocol in args.protocols:
+                        pcap_rows[protocol].append(row)
         else:
             print("  (missing) pcap_measurements*.csv")
 

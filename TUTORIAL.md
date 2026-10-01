@@ -35,7 +35,7 @@ Manual stack (baseline, `docker-compose.yaml`) vs. automated stack
 | Docker Engine 24+ with Compose v2 | containers / networking / `tc` | `docker --version`, `docker compose version` |
 | Backend that supports `CAP_NET_ADMIN` | the chaos profiles use Linux `tc` (netem/tbf) | Docker Desktop **WSL2** backend on Windows, or native Linux |
 | Python 3.11+ (with `venv`) | host harness + data generator | `python --version` |
-| Wireshark CLI `tshark` | pcap analysis | `tshark --version` (auto-detected: PATH or `C:\Program Files\Wireshark`) |
+| Wireshark CLI `tshark` | pcap analysis (**optional**) | `tshark --version` (auto-detected: PATH or `C:\Program Files\Wireshark`; otherwise runs in the `netshoot` container) |
 
 No host-side MQTT/HTTP/CoAP libraries are needed — everything protocol-related runs
 inside the containers.
@@ -321,7 +321,7 @@ can even run **simultaneously** without conflicts.
 | Symptom | Cause → Fix |
 |---|---|
 | `service '...-capture' is not running` | stack is down. `docker compose up -d` first |
-| `pcap analysis failed: [WinError 2] The system cannot find the file specified` | host `tshark` not on PATH. Install Wireshark; `common/pcap_analyzer.py` now auto-detects `C:\Program Files\Wireshark\tshark.exe` |
+| `pcap analysis failed: ... tshark not found` | neither a host `tshark` nor the container fallback is available. Install Wireshark, or make sure `docker run --rm --entrypoint tshark nicolaka/netshoot --version` works |
 | `tshark: Some fields aren't valid: coap.messageid` | old field name; analyzer now uses `coap.mid` |
 | `ValueError: dict contains fields not in fieldnames: 'packet_types'` | needs the fixed `write_to_file_pcap` (adds `packet_types` as JSON) |
 | `tcpdump never started writing ...` | capture sidecar isn't ready / netshoot not pulled. Re-run `docker compose up -d` and check `docker compose ps` |

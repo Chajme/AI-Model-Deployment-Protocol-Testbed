@@ -128,19 +128,20 @@ def _tool_version(argv):
 def _versions():
     """Tool versions recorded in the run manifest.
 
-    tshark is resolved through pcap_analyzer.resolve_tshark(): it is commonly
-    installed outside PATH (e.g. C:\\Program Files\\Wireshark), so a bare
-    `tshark --version` records null even though pcap analysis works.
+    tshark is resolved through pcap_analyzer: it is commonly installed outside
+    PATH on Windows (e.g. C:\\Program Files\\Wireshark) and, when absent,
+    analysis runs tshark inside the netshoot container -- tshark_version()
+    reports the version actually used in either case.
     """
     try:
-        from common.pcap_analyzer import resolve_tshark
+        from common.pcap_analyzer import tshark_version
 
-        tshark_argv = [resolve_tshark(), "--version"]
+        tshark = tshark_version()
     except Exception:
-        tshark_argv = ["tshark", "--version"]
+        tshark = None
     return {
         "docker": _tool_version(["docker", "--version"]),
-        "tshark": _tool_version(tshark_argv),
+        "tshark": tshark,
     }
 
 

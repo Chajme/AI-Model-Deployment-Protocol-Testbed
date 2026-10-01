@@ -1,0 +1,8 @@
+# Normalize line endings to LF in the working tree.
+#
+# The application files are bind-mounted into Linux containers. A shell
+# script checked out with CRLF line endings fails to exec with
+# "exec /app/scripts/network_chaos.sh: no such file or directory" because the
+# kernel treats the CR as part of the "#!" interpreter path. Forcing LF keeps
+# the scripts runnable on Windows hosts as well as Linux.
+* text=auto eol=lf

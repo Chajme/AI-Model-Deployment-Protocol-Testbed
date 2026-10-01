@@ -52,38 +52,80 @@ RETRANSMISSION_FILTER = (
 )
 
 
-def resolve_tshark() -> str:
-    """Return the path to tshark, checking PATH and common install locations."""
+# The capture sidecars already use this image and it ships tshark, so pcap
+# analysis can run inside a throwaway container when no host tshark is
+# installed (the common case on Windows). Override with TSHARK_CONTAINER_IMAGE
+# if a different image/tag is preferred.
+TSHARK_CONTAINER_IMAGE = os.getenv("TSHARK_CONTAINER_IMAGE", "nicolaka/netshoot")
+
+_HOST_TSHARK_CANDIDATES = [
+    r"C:\Program Files\Wireshark\tshark.exe",
+    r"C:\Program Files (x86)\Wireshark\tshark.exe",
+    "/usr/bin/tshark",
+    "/usr/sbin/tshark",
+]
+
+
+def _find_host_tshark() -> str | None:
+    """Path to a tshark binary on this host, or None when it is not installed."""
     discovered = shutil.which("tshark")
-    if not discovered:
-        candidates = [
-            r"C:\Program Files\Wireshark\tshark.exe",
-            r"C:\Program Files (x86)\Wireshark\tshark.exe",
-            "/usr/bin/tshark",
-            "/usr/sbin/tshark",
-        ]
-        discovered = next(
-            (p for p in candidates if os.path.exists(p)),
-            None,
-        )
+    if discovered:
+        return discovered
+    return next((p for p in _HOST_TSHARK_CANDIDATES if os.path.exists(p)), None)
+
+
+def resolve_tshark() -> str:
+    """Return the path to a *host* tshark, checking PATH and common locations.
+
+    Raises FileNotFoundError when no host tshark exists. Analysis itself does
+    not require one: run_tshark() transparently falls back to tshark inside the
+    netshoot container, and tshark_version() describes whichever is used.
+    """
+    discovered = _find_host_tshark()
     if not discovered:
         raise FileNotFoundError(
-            "tshark not found on PATH. Install Wireshark (tshark is bundled "
-            "with it) or add its folder to PATH."
+            "tshark not found on PATH (and no Wireshark install in the usual "
+            "locations). Install Wireshark (tshark is bundled with it) or add "
+            "its folder to PATH; pcap analysis will otherwise run tshark in "
+            f"the '{TSHARK_CONTAINER_IMAGE}' container."
         )
     return discovered
+
+
+def _docker_mount_path(path) -> str:
+    """Host path in the forward-slash form the Docker CLI expects."""
+    return str(path).replace("\\", "/")
+
+
+def tshark_version() -> str | None:
+    """First line of `tshark --version`, using the host or the container."""
+    host = _find_host_tshark()
+    if host:
+        command = [host, "--version"]
+    else:
+        command = [
+            "docker", "run", "--rm", "--network", "none",
+            "--entrypoint", "tshark", TSHARK_CONTAINER_IMAGE, "--version",
+        ]
+    try:
+        result = subprocess.run(
+            command, capture_output=True, text=True, timeout=60
+        )
+        lines = (result.stdout or "").splitlines()
+        return lines[0].strip() if lines else None
+    except Exception:
+        return None
 
 
 def run_tshark(pcap_file, display_filter=None, fields=None, extra_args=None):
     """
     Run tshark and return rows of extracted fields.
 
-    extra_args: optional raw tshark arguments (e.g. decode-as hints).
+    A host tshark is used when available; otherwise tshark runs inside the
+    netshoot container with the pcap's directory bind-mounted read-only at
+    /pcaps. extra_args: optional raw tshark arguments (e.g. decode-as hints).
     """
-    command = [
-        resolve_tshark(),
-        "-r",
-        str(pcap_file),
+    tail = [
         "-T",
         "fields",
         "-E",
@@ -95,13 +137,29 @@ def run_tshark(pcap_file, display_filter=None, fields=None, extra_args=None):
     ]
 
     if extra_args:
-        command.extend(extra_args)
+        tail.extend(extra_args)
 
     if display_filter:
-        command.extend(["-Y", display_filter])
+        tail.extend(["-Y", display_filter])
 
     for field in fields:
-        command.extend(["-e", field])
+        tail.extend(["-e", field])
+
+    host = _find_host_tshark()
+    if host:
+        command = [host, "-r", str(pcap_file), *tail]
+    else:
+        # Read-only bind mount of the pcap's directory; --network none keeps
+        # the throwaway container fully isolated.
+        pcap = Path(pcap_file).resolve()
+        mount = f"{_docker_mount_path(pcap.parent)}:/pcaps:ro"
+        command = [
+            "docker", "run", "--rm", "--network", "none",
+            "-v", mount,
+            "--entrypoint", "tshark", TSHARK_CONTAINER_IMAGE,
+            "-r", f"/pcaps/{pcap.name}",
+            *tail,
+        ]
 
     result = subprocess.run(
         command,
