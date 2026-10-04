@@ -16,17 +16,17 @@ pip install -r requirements-charts.txt
 
 ### Client-side metrics (`CLIENT_METRICS`)
 
-`fields` maps each protocol to its CSV column (MQTT has **no** CPU/RAM/energy;
-every other protocol populates all columns via `common/resource_monitor.py`):
+`fields` maps each protocol to its CSV column (every protocol populates all
+columns via `common/resource_monitor.py`):
 
 | Metric | Title | y-label | size-dep. | http col | coap col | mqtt col | amqp col | grpc col | lwm2m col |
 |---|---|---|---|---|---|---|---|---|---|
 | `goodput_mbps` | Goodput (client-measured) | Mbps | yes | `goodput_mbps` | `goodput_mbps` | `goodput_mbps` | `goodput_mbps` | `goodput_mbps` | `goodput_mbps` |
 | `transfer_time` | Transfer time | seconds | yes | `time_to_transfer` | `time_to_transfer` | `sender_duration` | `sender_duration` | `sender_duration` | `download_duration` |
 | `latency` | Latency | seconds | yes | `latency_tcp_rtt` | `latency` | `latency` | `latency` | `latency` | `latency` |
-| `avg_cpu_pct` | Avg CPU usage | % | no | `avg_cpu_usage` | `avg_cpu_usage` | — | `avg_cpu_usage` | `avg_cpu_usage` | `avg_cpu_usage` |
-| `peak_ram_mb` | Peak RAM | MB | no | `peak_ram_usage` | `peak_ram_usage` | — | `peak_ram_usage` | `peak_ram_usage` | `peak_ram_usage` |
-| `energy_j` | Energy estimate | J | no | `energy_est` | `energy_est` | — | `energy_est` | `energy_est` | `energy_est` |
+| `avg_cpu_pct` | Avg CPU usage | % | no | `avg_cpu_usage` | `avg_cpu_usage` | `avg_cpu_usage` | `avg_cpu_usage` | `avg_cpu_usage` | `avg_cpu_usage` |
+| `peak_ram_mb` | Peak RAM | MB | no | `peak_ram_usage` | `peak_ram_usage` | `peak_ram_usage` | `peak_ram_usage` | `peak_ram_usage` | `peak_ram_usage` |
+| `energy_j` | Energy estimate | J | no | `energy_est` | `energy_est` | `energy_est` | `energy_est` | `energy_est` | `energy_est` |
 
 #### Metric semantics caveats
 

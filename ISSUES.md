@@ -150,6 +150,17 @@ so per-protocol runs of one sweep chart together. `--outdir` defaults to
 `output/charts` in multi-run mode; row-level `run_id`/`network_profile`
 columns keep the merged data self-describing.
 
+## FIXED-8: MQTT never recorded CPU / RAM / energy
+
+MQTT was the only protocol with no resource sampling: `client_a` (sender) and
+`client_b` (receiver) left the `avg_cpu_usage`/`peak_ram_usage`/`energy_est`
+columns empty even though `write_to_file_mqtt` declared them. Both clients now
+wrap the transfer in `ResourceMonitor` (sender: before the control message to
+after the last chunk; receiver: metadata arrival to final chunk), and
+`common/charts.py` maps `mqtt` into the CPU/RAM/energy panels. All six protocols
+are now consistent client-side. The caveats in OPEN-2 and §5 of
+`docs/metrics-schema.md` still apply.
+
 ---
 
 ## Non-issues (documented so they are not "fixed" by mistake)

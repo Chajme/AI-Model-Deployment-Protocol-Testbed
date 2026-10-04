@@ -4,6 +4,7 @@ import time
 
 from common.file_manager import get_file_path_input, output_directory_exists, get_file_path_output
 from common.integrity_checker import compute_sha256_file
+from common.resource_monitor import ResourceMonitor
 from output.write_csv import write_to_file_mqtt
 
 BROKER = "mosquitto-broker"
@@ -28,6 +29,8 @@ transfer_start_time = 0
 
 expected_checksum = None
 
+monitor = None
+
 _current_qos = "unknown"
 
 
@@ -45,10 +48,13 @@ def _connect_with_retries(client, host, port, attempts=15, delay=2):
 
 
 def _transfer_completed_handler():
-    global start_latency, transfer_start_time, expected_checksum, _current_qos
+    global start_latency, transfer_start_time, expected_checksum, _current_qos, monitor
 
     transfer_duration = time.perf_counter() - transfer_start_time
     file_size_mb = received_bytes / (1024 * 1024)
+
+    resource_stats = monitor.stop() if monitor else {}
+    monitor = None
 
     actual_checksum = compute_sha256_file(get_file_path_output(current_filename))
     integrity_ok = (expected_checksum == actual_checksum)
@@ -75,6 +81,9 @@ def _transfer_completed_handler():
             "latency": f"{start_latency:.4f}",
             "goodput_mbps": f"{goodput_mbps:.3f}",
             "integrity_ok": integrity_ok,
+            "avg_cpu_usage": f"{resource_stats.get('avg_cpu_pct', 0):.2f}%",
+            "peak_ram_usage": f"{resource_stats.get('peak_rss_mb', 0):.2f} MB",
+            "energy_est": f"{resource_stats.get('energy_j', 0):.4f}",
         }
     ]
     write_to_file_mqtt(measurements)
@@ -90,7 +99,7 @@ def on_connect(client, userdata, flags, rc):
 def on_message(client, userdata, msg):
     global current_file_handle, expected_chunks, received_chunks, \
         current_filename, start_latency, received_bytes, metadata_arrival_time, \
-        first_chunk_received, transfer_start_time, expected_checksum, _current_qos
+        first_chunk_received, transfer_start_time, expected_checksum, _current_qos, monitor
 
     # Handle Metadata Message
     if msg.topic == TOPIC_CTRL:
@@ -123,7 +132,12 @@ def on_message(client, userdata, msg):
             )
             current_file_handle.close()
 
+        if monitor is not None:
+            monitor.stop()
+
         current_file_handle = open(get_file_path_output(current_filename), "wb")
+        monitor = ResourceMonitor(sample_interval=0.01)
+        monitor.start()
 
     # Handle Raw Binary Chunk Message
     elif msg.topic == TOPIC_DATA and current_file_handle is not None:

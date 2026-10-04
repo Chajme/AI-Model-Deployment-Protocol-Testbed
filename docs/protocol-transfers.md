@@ -29,7 +29,8 @@ metric. This page documents the client and server code for all three.
      per chunk (this is why MQTT goodput is low for large files).
   6. Duration is wall-clock from before the control message to after the last
      chunk; `goodput_mbps = file_size × 8 / (duration × 1e6)`.
-  7. Writes a `side=sender` row (no CPU/RAM/energy columns for MQTT).
+  7. Writes a `side=sender` row with CPU/RAM/energy from `ResourceMonitor`
+     (wrapping the metadata + chunk publish window).
 - CLI: `--file <name> --qos <1|2>` (both required); sleeps 5 s on startup for
   the broker.
 
@@ -38,13 +39,14 @@ metric. This page documents the client and server code for all three.
 - Connects with retries (`_connect_with_retries`, 15 attempts × 2 s) and
   subscribes to both topics at `qos=2` (the effective QoS is whatever the
   sender used).
-- On `file/control`: stores metadata, resets state, opens the output file.
-  Warns + closes the stale handle if a previous transfer was incomplete.
+- On `file/control`: stores metadata, resets state, opens the output file, and
+  starts a `ResourceMonitor`. Warns + closes the stale handle (and stops any
+  stale monitor) if a previous transfer was incomplete.
 - On `file/data`: writes payload, tracks bytes/chunks. **First-chunk latency** =
   `time.perf_counter() - metadata_arrival_time`.
 - On the final chunk: computes duration, verifies the received file's SHA-256
-  against the metadata checksum, and writes a `side=receiver` row with
-  `integrity_ok`.
+  against the metadata checksum, stops the monitor, and writes a `side=receiver`
+  row with `integrity_ok` plus the CPU/RAM/energy columns.
 
 ### CSV rows produced
 

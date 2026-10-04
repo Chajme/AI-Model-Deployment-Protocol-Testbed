@@ -109,7 +109,9 @@ Written by `common/runs.new_run()`, extended by `benchmark_manager.run_protocol(
 | `latency` | float | sender: metadata ACK latency; receiver: first-chunk lag |
 | `goodput_mbps` | float | file_size Ă— 8 / (own duration Ă— 1e6) |
 | `integrity_ok` | bool / empty | receiver verifies SHA-256; empty in sender rows |
-| `avg_cpu_usage` | â€” | MQTT writes **no** CPU/RAM/energy columns |
+| `avg_cpu_usage` | str | `"12.34%"` |
+| `peak_ram_usage` | str | `"28.15 MB"` |
+| `energy_est` | str | joules |
 
 One transfer â†’ **two rows** (sender + receiver), each with its own duration and
 latency definition. `charts.py` reads the sender row by default.
@@ -134,21 +136,29 @@ latency definition. `charts.py` reads the sender row by default.
 
 ## 5. CPU / RAM / energy â€” `common/resource_monitor.py`
 
-`ResourceMonitor` samples the **client process tree** (`psutil.Process(os.getpid())`
-â†’ cpu_percent(non-blocking) + RSS) on a background thread.
+`ResourceMonitor` samples the **client process** (`psutil.Process(os.getpid())`
+-> cpu_percent(non-blocking) + RSS) on a background thread. It currently samples
+only the launched process, not its subprocess tree.
 
 | Output | Definition |
 |---|---|
-| `avg_cpu_pct` | mean of CPU% samples, **divided by `cpu_count`** (so it's per-core %) |
+| `avg_cpu_pct` | mean of CPU% samples, **divided once by `cpu_count`** (fraction of all host cores, 0-100) |
 | `peak_rss_mb` | max RSS sample in MiB |
-| `energy_j` | `(avg_cpu_pct / 100) / logical_cores Ă— TDP Ă— duration_s` |
+| `energy_j` | `(avg_cpu_pct / 100) x TDP x duration_s` |
 
 `TDP` defaults to `CPU_TDP_WATTS` env var or **15.0 W**. The comment in the code
 notes this is an approximation; RAPL (`intel-rapl`) is more accurate.
 
-HTTP and CoAP sample at `sample_interval=0.01` (100 Hz); the chart tooling
-parses the units off the strings (e.g. `"2.71%"`, `"28.15 MB"`) â€” see
+All clients sample at `sample_interval=0.01` (100 Hz); the chart tooling parses
+the units off the strings (e.g. `"2.71%"`, `"28.15 MB"`) - see
 [charts.md](charts.md) `_to_number`.
+
+**Caveats.** `avg_cpu_pct` is normalized by the *host* logical-core count
+(Docker CPU limits are not applied), so absolute values are small and mainly
+useful for relative comparison. Short/fast transfers may collect zero or one
+sample and round to `0.00%` / `0.0000 J` (see ISSUES.md OPEN-2). `energy_j` is
+derived from CPU and a guessed TDP, not measured, so treat it as a rough
+relative indicator.
 
 ---
 

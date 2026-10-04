@@ -13,6 +13,7 @@ import threading
 
 from common.file_manager import get_file_path_input
 from common.integrity_checker import compute_sha256_file
+from common.resource_monitor import ResourceMonitor
 from output.write_csv import write_to_file_mqtt
 
 BROKER = "mosquitto-broker"
@@ -99,6 +100,8 @@ def send_file(filename, qos_level):
     ack_latency = 0
     metadata_ack_event.clear()
 
+    monitor = ResourceMonitor(sample_interval=0.01)
+    monitor.start()
 
     start_time = time.time()
     msg_info, metadata_payload_len = send_metadata(filename, total_chunks, checksum, qos_level, client)
@@ -114,6 +117,7 @@ def send_file(filename, qos_level):
     client.loop_stop()
     client.disconnect()
     duration = end_time - start_time
+    resource_stats = monitor.stop()
 
     goodput_mbps = (file_size * 8) / (duration * 1_000_000)
 
@@ -126,7 +130,10 @@ def send_file(filename, qos_level):
             "sender_duration": f"{duration:.2f}",
             "receiver_duration": "X",
             "latency": f"{ack_latency:.4f}",
-            "goodput_mbps": f"{goodput_mbps:.3f}"
+            "goodput_mbps": f"{goodput_mbps:.3f}",
+            "avg_cpu_usage": f"{resource_stats['avg_cpu_pct']:.2f}%",
+            "peak_ram_usage": f"{resource_stats['peak_rss_mb']:.2f} MB",
+            "energy_est": f"{resource_stats['energy_j']:.4f}",
         }
     ]
     write_to_file_mqtt(measurements)

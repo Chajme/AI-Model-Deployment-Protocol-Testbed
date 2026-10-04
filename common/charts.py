@@ -77,8 +77,8 @@ QOS_STYLES = {None: "-", "1": "--", "2": ":"}
 QOS_HATCH = {None: None, "1": "//", "2": "xx"}
 
 # Client-side metrics. `fields` maps protocol -> CSV column holding the value
-# for this metric (MQTT has no cpu/ram/energy columns). `size_dependent`
-# drives the auto chart type: size-dependent metrics -> line charts.
+# for this metric. `size_dependent` drives the auto chart type:
+# size-dependent metrics -> line charts.
 CLIENT_METRICS = {
     "goodput_mbps": {
         "title": "Goodput (client-measured)",
@@ -109,24 +109,24 @@ CLIENT_METRICS = {
         "ylabel": "%",
         "size_dependent": False,
         "fields": {"http": "avg_cpu_usage", "coap": "avg_cpu_usage",
-                   "amqp": "avg_cpu_usage", "grpc": "avg_cpu_usage",
-                   "lwm2m": "avg_cpu_usage"},
+                   "mqtt": "avg_cpu_usage", "amqp": "avg_cpu_usage",
+                   "grpc": "avg_cpu_usage", "lwm2m": "avg_cpu_usage"},
     },
     "peak_ram_mb": {
         "title": "Peak RAM",
         "ylabel": "MB",
         "size_dependent": False,
         "fields": {"http": "peak_ram_usage", "coap": "peak_ram_usage",
-                   "amqp": "peak_ram_usage", "grpc": "peak_ram_usage",
-                   "lwm2m": "peak_ram_usage"},
+                   "mqtt": "peak_ram_usage", "amqp": "peak_ram_usage",
+                   "grpc": "peak_ram_usage", "lwm2m": "peak_ram_usage"},
     },
     "energy_j": {
         "title": "Energy estimate",
         "ylabel": "J",
         "size_dependent": False,
         "fields": {"http": "energy_est", "coap": "energy_est",
-                   "amqp": "energy_est", "grpc": "energy_est",
-                   "lwm2m": "energy_est"},
+                   "mqtt": "energy_est", "amqp": "energy_est",
+                   "grpc": "energy_est", "lwm2m": "energy_est"},
     },
 }
 
