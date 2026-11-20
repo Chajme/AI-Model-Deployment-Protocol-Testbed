@@ -25,8 +25,8 @@ import time
 import aiocoap
 import aiocoap.resource as resource
 
-from common.file_manager import save_file, get_file_path_input, output_directory_exists
-from common.integrity_checker import sha256
+from common.file_manager import get_file_path_input, output_directory_exists
+from common.integrity_checker import sha256, compute_sha256_file
 from common.resource_monitor import ResourceMonitor
 from output.write_csv import write_to_file_lwm2m
 
@@ -136,7 +136,7 @@ async def run_flow(filename: str):
 
         # 2. Kick off the update flow for this file.
         filepath = get_file_path_input(filename)
-        checksum = sha256_file(filepath)
+        checksum = compute_sha256_file(filepath)
         await trigger_update(context, filename, checksum)
 
         # 3-4. Receive Package URI, then pull the object blockwise.
@@ -175,20 +175,12 @@ async def run_flow(filename: str):
                     "avg_cpu_usage": f"{resource_stats['avg_cpu_pct']:.2f}%",
                     "peak_ram_usage": f"{resource_stats['peak_rss_mb']:.2f} MB",
                     "energy_est": f"{resource_stats['energy_j']:.4f}",
+                    "sample_count": resource_stats["sample_count"],
                 }
             ]
         )
     finally:
         await context.shutdown()
-
-
-def sha256_file(filepath: str) -> str:
-    import hashlib
-    h = hashlib.sha256()
-    with open(filepath, "rb") as f:
-        for block in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(block)
-    return h.hexdigest()
 
 
 if __name__ == "__main__":

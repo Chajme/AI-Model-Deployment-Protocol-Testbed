@@ -1,7 +1,7 @@
 # Protocol transfer internals
 
 Each protocol has a distinct on-the-wire behavior and a distinct latency
-metric. This page documents the client and server code for all three.
+metric. This page documents the client and server code for all six.
 
 ---
 
@@ -21,14 +21,18 @@ metric. This page documents the client and server code for all three.
   2. Compute SHA-256 of the file.
   3. `send_metadata()` publishes the control message at the requested QoS and
      records `metadata_sent_time` + the publish `mid`.
-  4. **ACK latency**: `on_publish` fires when the broker acknowledges the
-     control message (`mid == metadata_mid`); `ack_latency = now - sent_time`.
-     Waits up to 10 s (`metadata_ack_event.wait(timeout=10)`).
+  4. **ACK latency** (outside the timed window): `on_publish` fires when the
+     broker acknowledges the control message (`mid == metadata_mid`);
+     `ack_latency = now - sent_time`. Waits up to 10 s
+     (`metadata_ack_event.wait(timeout=10)`). The metadata round trip is
+     recorded separately in `latency`, so a lost metadata ACK can no longer
+     inject up to 10 s into `sender_duration`.
   5. `send_chunks()` publishes every 1 MiB chunk with
      `msg_info.wait_for_publish(timeout=60)` per chunk — one publish round-trip
      per chunk (this is why MQTT goodput is low for large files).
-  6. Duration is wall-clock from before the control message to after the last
-     chunk; `goodput_mbps = file_size × 8 / (duration × 1e6)`.
+  6. Duration is wall-clock across the chunk publishes only — the timer starts
+     once the metadata ACK has arrived;
+     `goodput_mbps = file_size × 8 / (duration × 1e6)`.
   7. Writes a `side=sender` row with CPU/RAM/energy from `ResourceMonitor`
      (wrapping the metadata + chunk publish window).
 - CLI: `--file <name> --qos <1|2>` (both required); sleeps 5 s on startup for
@@ -47,12 +51,16 @@ metric. This page documents the client and server code for all three.
 - On the final chunk: computes duration, verifies the received file's SHA-256
   against the metadata checksum, stops the monitor, and writes a `side=receiver`
   row with `integrity_ok` plus the CPU/RAM/energy columns.
+- **Single-chunk transfers** (file ≤ 1 chunk) record `receiver_duration="X"`
+  and `goodput_mbps="X"` — a single chunk spans no measurable arrival window
+  (the old sub-millisecond windows produced fake 1500+ Mbps rows).
+  First-chunk lag and integrity are still recorded.
 
 ### CSV rows produced
 
 Two rows per transfer — one from the sender, one from the receiver — each with
-its own `duration` and `latency` definition. `charts.py` defaults to the sender
-row (`--mqtt-side sender`).
+its own `duration` and `latency` definition. `charts.py` selects the sender row
+by default (`--side auto`).
 
 ---
 
@@ -158,7 +166,10 @@ subtlety: an ACK **echoes the request's MID**, so raw MID counting over-counts).
   until the broker confirms (at-least-once, analogous to MQTT QoS 1). pika ≥1.1
   raises `UnroutableError`/`NackError` on failure; success returns `None`.
 - **ACK latency**: timing the blocking metadata `basic_publish` yields a real
-  broker round-trip.
+  broker round-trip, recorded separately in `latency`.
+- **Timing**: the timed sender window covers only the chunk publishes — the
+  metadata publish+confirm happens before the timer starts, so a lost metadata
+  confirm can no longer inflate `sender_duration`.
 
 ### Receiver: `protocols/AMQP/receiver/amqp_receiver.py`
 
@@ -166,6 +177,9 @@ subtlety: an ACK **echoes the request's MID**, so raw MID counting over-counts).
   bound memory during large transfers.
 - Reassembles chunks into `OUTPUT_DIR/<filename>` and verifies the SHA-256;
   appends its own receiver row (`integrity_ok`) to `amqp_measurements.csv`.
+- **Single-chunk transfers** (file ≤ 1 chunk) record `receiver_duration="X"`
+  and `goodput_mbps="X"` — a single chunk spans no measurable arrival window
+  (the old sub-millisecond windows produced fake 1500+ Mbps rows).
 
 ### Wire notes
 

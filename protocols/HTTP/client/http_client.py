@@ -112,7 +112,8 @@ def transfer_file(filename: str) -> None:
                 "integrity_ok": integrity_ok,
                 "avg_cpu_usage": f"{resource_stats['avg_cpu_pct']:.2f}%",
                 "peak_ram_usage": f"{resource_stats['peak_rss_mb']:.2f} MB",
-                "energy_est": f"{resource_stats['energy_j']:.4f}"
+                "energy_est": f"{resource_stats['energy_j']:.4f}",
+                "sample_count": resource_stats["sample_count"],
             }
         ]
         write_to_file_http(measurements)

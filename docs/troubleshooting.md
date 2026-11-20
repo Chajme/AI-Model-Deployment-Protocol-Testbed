@@ -23,7 +23,7 @@ that run are unreliable.
 
 Causes:
 - tcpdump kernel buffer overflow on a burst. The harness already uses
-  `-B 8192` (`TCPDUMP_BUFFER_KB`, common/packet_capture.py) and deliberately
+  `-B 32768` (`TCPDUMP_BUFFER_KB`, common/packet_capture.py) and deliberately
   avoids `-U` packet-buffered mode — if you changed either, revert.
 - Host I/O stall (large files, Windows/WSL2 disk backpressure).
 - Under lossy chaos profiles a *legitimately* smaller capture is possible; the

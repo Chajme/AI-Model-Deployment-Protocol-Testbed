@@ -1,6 +1,6 @@
 # Architecture
 
-The testbed runs three **isolated protocol networks** in Docker and measures
+The testbed runs six **isolated protocol networks** in Docker and measures
 every transfer from two independent vantage points. This page describes the
 containers, the networks, the two compose stacks, and the image build.
 
@@ -91,29 +91,25 @@ names, so one `docker compose build` covers both.
 
 - Servers/broker **auto-start** (`command: python -m ...`); clients are idle.
 - Capture sidecars are idle, waiting for tcpdump to be started per run.
-- `MEASUREMENT_SUFFIX=_testing` is set (recorded in `run.json`); a manual
-  `benchmark_manager.py` invocation creates a run, so client CSV rows land in
-  `output/runs/<run_id>/<proto>_measurements.csv`.
+- A manual `benchmark_manager.py` invocation creates a run, so client CSV rows
+  land in `output/runs/<run_id>/<proto>_measurements.csv`.
 - No `tc` — a clean baseline network.
 
 ### `docker-compose.automated.yaml` — chaos sweep
 
 - All services are **profile-gated**: `profiles: ["mqtt"]`, `["http"]`,
-  `["coap"]`. Only the selected protocol's services are started.
-- Every service runs `network_chaos.sh` as its entry point, which applies the
-  `tc` profile to `eth0` before doing anything else.
-- `NETWORK_PROFILE` and `MEASUREMENT_SUFFIX` are injected from the host env
-  (set by `runner.py`), and `runner.py` creates an immutable run directory
+  `["coap"]`, `["amqp"]`, `["grpc"]`, `["lwm2m"]`. Only the selected protocol's
+  services are started.
+- Every app service runs `network_chaos.sh` as its entry point, which applies
+  the `tc` profile to `eth0` before doing anything else (the stock broker
+  images and the netshoot capture sidecars do not run it).
+- `NETWORK_PROFILE` is injected from the host env (set by `runner.py`), and
+  `runner.py` creates an immutable run directory
   (`output/runs/<run_id>/`) that host and containers share.
 - Servers/receiver get `APP_COMMAND` (the real program to start after tc);
   clients get neither, so they apply tc and stay idle.
 - `CAP_NET_ADMIN` on every service (and `NET_RAW` on captures) is what allows
   `tc` and `tcpdump` to run inside the containers.
-
-### `docker-compose.tc.yaml` — legacy scratch
-
-A mostly commented-out scratch file for one-off manual chaos testing. It is not
-used by the harness. Ignore it.
 
 ---
 
@@ -149,7 +145,6 @@ compose.)
 |---|---|---|
 | `./data` | `/app/data` | clients (payloads) |
 | `./output` | `/app/output` | all containers (CSV rows) |
-| `./output/pcap` | `/pcap` | capture sidecars (left-over mount; active pcaps go through `/tmp`) |
 | `./uploads` | `/var/www/uploads/upload` | http/coap servers (received files) |
 | `./` | `/app` | all app containers (code) |
 
@@ -162,7 +157,7 @@ removes **named volumes only** — CSVs and pcaps survive.
 
 | Concern | Runs on |
 |---|---|
-| Protocol transfers | inside client containers (HTTP/MQTT/CoAP libs are container-only) |
+| Protocol transfers | inside client containers (all protocol libs are container-only) |
 | Packet capture | `tcpdump` inside the capture sidecar |
 | Capture orchestration (start/stop/copy) | host — `common/packet_capture.py` via `docker compose exec` |
 | pcap analysis | host — `common/pcap_analyzer.py`; host `tshark`, or containerized `tshark` from `netshoot` when absent |

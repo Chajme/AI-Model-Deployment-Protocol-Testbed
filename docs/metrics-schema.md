@@ -13,6 +13,9 @@ output/runs/<run_id>/
   http_measurements.csv           # HTTP client
   mqtt_measurements.csv           # MQTT sender AND receiver (side column)
   coap_measurements.csv           # CoAP client
+  amqp_measurements.csv           # AMQP sender AND receiver (side column)
+  grpc_measurements.csv           # gRPC sender AND receiver (side column)
+  lwm2m_measurements.csv          # LwM2M client (side=client)
   pcap/                           # one pcap per transfer
   charts/                         # generated on demand by common/charts.py --run
 ```
@@ -21,7 +24,7 @@ output/runs/<run_id>/
 (`<UTC-time>_<protocol>_<profile>`), overridable via `--run-id` (runner.py) or
 `RUN_ID`. The active run is shared between host and containers: `RUN_ID` env var
 on the host, and an `.active_run` marker file inside `output/` (read through the
-bind mount). Runs are **immutable** â€” a second write to the same id raises.
+bind mount). Runs are **immutable** — a second write to the same id raises.
 
 Legacy flat files (`output/*_measurements*.csv`, `output/pcap/`) were archived
 to `output/legacy/`. Without an active run, writers fall back to the flat
@@ -46,9 +49,9 @@ Written by `common/runs.new_run()`, extended by `benchmark_manager.run_protocol(
 |---|---|
 | `run_id` | the run id |
 | `created_at` | UTC ISO-8601 creation time |
-| `protocol` | `mqtt` / `http` / `coap` |
+| `protocol` | `mqtt` / `http` / `coap` / `amqp` / `grpc` / `lwm2m` |
 | `network_profile` | e.g. `iot`, `good`, `harsh` |
-| `env` | `{NETWORK_PROFILE, MEASUREMENT_SUFFIX, DATA_DIR, OUTPUT_DIR}` snapshot |
+| `env` | `{NETWORK_PROFILE, DATA_DIR, OUTPUT_DIR}` snapshot |
 | `docker`, `tshark` | tool versions at run start |
 | `file_sizes`, `files` | bytes + names of the payloads actually transferred |
 | `qos_levels` | MQTT QoS levels swept (MQTT runs only) |
@@ -56,47 +59,48 @@ Written by `common/runs.new_run()`, extended by `benchmark_manager.run_protocol(
 
 ---
 
-## 1. `output/pcap_measurements*.csv` â€” host harness (tshark)
+## 1. `output/pcap_measurements*.csv` — host harness (tshark)
 
 | # | Column | Type | Meaning |
 |---|---|---|---|
-| 1 | `protocol` | str | `mqtt` / `http` / `coap` |
+| 1 | `protocol` | str | `mqtt` / `http` / `coap` / `amqp` / `grpc` / `lwm2m` |
 | 2 | `filename` | str | payload file name, e.g. `binary_file_1mb.bin` |
 | 3 | `label` | str | `<filename>_<qos>` for MQTT, else `<filename>` |
-| 4 | `qos` | int / empty | MQTT QoS (1 or 2); empty for HTTP/CoAP |
+| 4 | `qos` | int / empty | MQTT QoS (1 or 2); empty for the other protocols |
 | 5 | `file_size_bytes` | int | exact payload size |
 | 6 | `total_packets` | int | every frame captured on the server interface |
 | 7 | `total_wire_bytes` | int | sum of `frame.len` across all frames |
 | 8 | `protocol_packets` | int | frames matching the protocol filter |
 | 9 | `protocol_wire_bytes` | int | sum of `frame.len` for protocol frames |
-| 10 | `retransmissions` | int | TCP: `tcp.analysis.*` flags; CoAP: repeated CON MIDs (see pcap-analysis) |
-| 11 | `duration_seconds` | float | last â’ first frame relative timestamp |
-| 12 | `total_overhead_bytes` | int | `total_wire_bytes â’ file_size_bytes` |
+| 10 | `retransmissions` | int | TCP: `tcp.analysis.*` flags; CoAP/LwM2M: repeated CON MIDs (see pcap-analysis) |
+| 11 | `duration_seconds` | float | first to last frame matching the protocol window filter (all-frames span only as a fallback) |
+| 12 | `total_overhead_bytes` | int | `total_wire_bytes − file_size_bytes` |
 | 13 | `overhead_percentage` | float | overhead as % of payload |
-| 14 | `wire_throughput_mbps` | float | `total_wire_bytes Ă— 8 / (duration Ă— 1e6)` |
-| 15 | `goodput_mbps` | float | `file_size_bytes Ă— 8 / (duration Ă— 1e6)` |
+| 14 | `wire_throughput_mbps` | float | `total_wire_bytes × 8 / (duration × 1e6)` |
+| 15 | `goodput_mbps` | float | `file_size_bytes × 8 / (duration × 1e6)` |
 | 16 | `packet_types` | JSON str | per-type frame histogram, e.g. `{"0": 391, "2": 407}` for CoAP CON/ACK |
 
 ---
 
-## 2. `output/http_measurements*.csv` â€” HTTP client
+## 2. `output/http_measurements*.csv` — HTTP client
 
 | Column | Type | Meaning |
 |---|---|---|
 | `protocol` | str | `http` |
 | `file_size` | float | MB |
-| `time_to_transfer` | float | s, request-start â†’ response-end (`time.perf_counter`) |
+| `time_to_transfer` | float | s, request-start → response-end (`time.perf_counter`) |
 | `latency_tcp_rtt` | float | s, bare TCP connect to `http-server:8000` |
-| `latency_ttfb` | float | s, request-start â†’ response headers arrive (response hook) |
-| `goodput_mbps` | float | `file_size_bytes Ă— 8 / (time_to_transfer Ă— 1e6)` |
+| `latency_ttfb` | float | s, request-start → response headers arrive (response hook) |
+| `goodput_mbps` | float | `file_size_bytes × 8 / (time_to_transfer × 1e6)` |
 | `integrity_ok` | bool | HTTP 200 (server verified checksum) |
 | `avg_cpu_usage` | str | e.g. `"12.34%"` |
 | `peak_ram_usage` | str | e.g. `"28.15 MB"` |
 | `energy_est` | str | e.g. `"0.0041"` (joules) |
+| `sample_count` | int | CPU/RAM samples behind the averages |
 
 ---
 
-## 3. `output/mqtt_measurements*.csv` â€” MQTT sender **and** receiver
+## 3. `output/mqtt_measurements*.csv` — MQTT sender **and** receiver
 
 | Column | Type | Meaning |
 |---|---|---|
@@ -104,47 +108,125 @@ Written by `common/runs.new_run()`, extended by `benchmark_manager.run_protocol(
 | `qos` | int | 1 or 2 |
 | `side` | str | `sender` (client_a) or `receiver` (client_b) |
 | `file_size` | float | MB |
-| `sender_duration` | float / `X` | sender wall-clock; `X` in receiver rows |
-| `receiver_duration` | float / `X` | receiver wall-clock; `X` in sender rows |
-| `latency` | float | sender: metadata ACK latency; receiver: first-chunk lag |
-| `goodput_mbps` | float | file_size Ă— 8 / (own duration Ă— 1e6) |
+| `sender_duration` | float / `X` | chunk-transmission window only (the metadata publish+ACK happens before the timer starts; `X` in receiver rows) |
+| `receiver_duration` | float / `X` | receiver wall-clock; `X` in sender rows and in single-chunk receiver rows |
+| `latency` | float | sender: metadata publish→ACK round trip; receiver: first-chunk lag |
+| `goodput_mbps` | float | file_size × 8 / (own duration × 1e6) |
 | `integrity_ok` | bool / empty | receiver verifies SHA-256; empty in sender rows |
 | `avg_cpu_usage` | str | `"12.34%"` |
 | `peak_ram_usage` | str | `"28.15 MB"` |
 | `energy_est` | str | joules |
+| `sample_count` | int | CPU/RAM samples behind the averages |
 
-One transfer â†’ **two rows** (sender + receiver), each with its own duration and
-latency definition. `charts.py` reads the sender row by default.
+One transfer → **two rows** (sender + receiver), each with its own duration and
+latency definition. `charts.py` selects the sender row by default (`--side auto`).
+
+Timing note: the sender's timed window covers **only chunk transmission** —
+the metadata publish+ACK round trip happens before the timer starts, so a lost
+metadata ACK can no longer inflate `sender_duration`; the metadata round trip
+is recorded separately in `latency`. Single-chunk transfers (file ≤ 1 chunk)
+record `receiver_duration="X"` and `goodput_mbps="X"` in receiver rows — a
+single chunk spans no measurable arrival window (the old sub-millisecond
+windows produced fake 1500+ Mbps rows). First-chunk lag and integrity are
+still recorded.
 
 ---
 
-## 4. `output/coap_measurements*.csv` â€” CoAP client
+## 4. `output/coap_measurements*.csv` — CoAP client
 
 | Column | Type | Meaning |
 |---|---|---|
 | `protocol` | str | `coap` |
 | `file_size` | float | MB |
-| `time_to_transfer` | float | s, request â†’ final response |
+| `time_to_transfer` | float | s, request → final response |
 | `latency` | float | s, `GET /.well-known/core` round-trip |
-| `goodput_mbps` | float | file_size Ă— 8 / (time_to_transfer Ă— 1e6) |
+| `goodput_mbps` | float | file_size × 8 / (time_to_transfer × 1e6) |
 | `integrity_ok` | bool | response code is successful (2.04 Changed) |
 | `avg_cpu_usage` | str | `"12.34%"` |
 | `peak_ram_usage` | str | `"28.15 MB"` |
 | `energy_est` | str | joules |
+| `sample_count` | int | CPU/RAM samples behind the averages |
 
 ---
 
-## 5. CPU / RAM / energy â€” `common/resource_monitor.py`
+## 5. `output/amqp_measurements*.csv` — AMQP sender **and** receiver
+
+| Column | Type | Meaning |
+|---|---|---|
+| `protocol` | str | `amqp` |
+| `side` | str | `sender` or `receiver` |
+| `file_size` | float | MB |
+| `sender_duration` | float / `X` | chunk-transmission window only (the metadata publish+confirm happens before the timer starts; `X` in receiver rows) |
+| `receiver_duration` | float / `X` | receiver wall-clock; `X` in sender rows and in single-chunk receiver rows |
+| `latency` | float | sender: metadata publish-confirm round trip; receiver: first-chunk lag |
+| `goodput_mbps` | float | file_size × 8 / (own duration × 1e6) |
+| `integrity_ok` | bool / empty | receiver verifies SHA-256; empty in sender rows |
+| `avg_cpu_usage` | str | `"12.34%"` |
+| `peak_ram_usage` | str | `"28.15 MB"` |
+| `energy_est` | str | joules |
+| `sample_count` | int | CPU/RAM samples behind the averages |
+
+One transfer → **two rows** (sender + receiver). The sender's timed window
+covers only chunk transmission (metadata confirm outside the window, recorded
+in `latency`); single-chunk transfers record `receiver_duration="X"` and
+`goodput_mbps="X"` in receiver rows.
+
+---
+
+## 6. `output/grpc_measurements*.csv` — gRPC sender **and** receiver
+
+| Column | Type | Meaning |
+|---|---|---|
+| `protocol` | str | `grpc` |
+| `side` | str | `sender` or `receiver` |
+| `file_size` | float | MB |
+| `sender_duration` | float / `X` | full `Upload` RPC call (stream start → result); `X` in receiver rows |
+| `receiver_duration` | float / `X` | server-side reassembly window; `X` in sender rows |
+| `latency` | float | unary `Ping` RPC round trip |
+| `goodput_mbps` | float | file_size × 8 / (own duration × 1e6) |
+| `integrity_ok` | bool / empty | server verifies SHA-256 and renames `.part` → final on match |
+| `avg_cpu_usage` | str | `"12.34%"` |
+| `peak_ram_usage` | str | `"28.15 MB"` |
+| `energy_est` | str | joules |
+| `sample_count` | int | CPU/RAM samples behind the averages |
+
+One transfer → **two rows** (sender + receiver).
+
+---
+
+## 7. `output/lwm2m_measurements*.csv` — LwM2M client
+
+| Column | Type | Meaning |
+|---|---|---|
+| `protocol` | str | `lwm2m` |
+| `side` | str | `client` (the device-side emulator is the only row producer) |
+| `file_size` | float | MB |
+| `download_duration` | float | s, blockwise `GET` of the package object only (registration and state reports excluded) |
+| `latency` | float | s, registration (`POST /rd`) round trip |
+| `goodput_mbps` | float | file_size × 8 / (download_duration × 1e6) |
+| `integrity_ok` | bool | client verifies the SHA-256 of the pulled object |
+| `avg_cpu_usage` | str | `"12.34%"` |
+| `peak_ram_usage` | str | `"28.15 MB"` |
+| `energy_est` | str | joules |
+| `sample_count` | int | CPU/RAM samples behind the averages |
+
+---
+
+## 8. CPU / RAM / energy — `common/resource_monitor.py`
 
 `ResourceMonitor` samples the **client process** (`psutil.Process(os.getpid())`
 -> cpu_percent(non-blocking) + RSS) on a background thread. It currently samples
-only the launched process, not its subprocess tree.
+only the launched process, not its subprocess tree. `stop()` keeps sampling
+until at least `MIN_WINDOW_SECONDS` (0.2 s) have elapsed since `start()` so
+fast transfers still collect usable averages, and is idempotent — later calls
+return the same stats.
 
 | Output | Definition |
 |---|---|
 | `avg_cpu_pct` | mean of CPU% samples, **divided once by `cpu_count`** (fraction of all host cores, 0-100) |
 | `peak_rss_mb` | max RSS sample in MiB |
 | `energy_j` | `(avg_cpu_pct / 100) x TDP x duration_s` |
+| `sample_count` | number of CPU/RAM samples behind the averages |
 
 `TDP` defaults to `CPU_TDP_WATTS` env var or **15.0 W**. The comment in the code
 notes this is an approximation; RAPL (`intel-rapl`) is more accurate.
@@ -155,14 +237,14 @@ the units off the strings (e.g. `"2.71%"`, `"28.15 MB"`) - see
 
 **Caveats.** `avg_cpu_pct` is normalized by the *host* logical-core count
 (Docker CPU limits are not applied), so absolute values are small and mainly
-useful for relative comparison. Short/fast transfers may collect zero or one
-sample and round to `0.00%` / `0.0000 J` (see ISSUES.md OPEN-2). `energy_j` is
-derived from CPU and a guessed TDP, not measured, so treat it as a rough
-relative indicator.
+useful for relative comparison. `sample_count` is the confidence signal: rows
+with very few samples (fast transfers that only just cleared the 0.2 s minimum
+window) should be treated as low-confidence. `energy_j` is derived from CPU and
+a guessed TDP, not measured, so treat it as a rough relative indicator.
 
 ---
 
-## 6. Which CSV is which (quick reference)
+## 9. Which CSV is which (quick reference)
 
 | Path | Producer | When |
 |---|---|---|
@@ -170,4 +252,4 @@ relative indicator.
 | `output/runs/<run_id>/pcap_measurements.csv` | host harness | every run |
 | `output/runs/<run_id>/pcap/*.pcap` | capture sidecar | one per transfer |
 | `output/runs/<run_id>/charts/*.png` | `common/charts.py --run` | generated on demand |
-| `output/*_measurements*.csv`, `output/pcap/` | any | **legacy** â€” archived to `output/legacy/`, written only when no run is active |
+| `output/*_measurements*.csv`, `output/pcap/` | any | **legacy** — archived to `output/legacy/`, written only when no run is active |

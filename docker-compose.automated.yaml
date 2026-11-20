@@ -30,7 +30,6 @@ services:
       - mqtt-net
     environment:
       - NETWORK_PROFILE=${NETWORK_PROFILE}
-      - MEASUREMENT_SUFFIX=${MEASUREMENT_SUFFIX}
 
   # Receiver -- stays up and waits for published chunks from client A.
   mqtt-client-b:
@@ -49,7 +48,6 @@ services:
     environment:
       - APP_COMMAND=python -m protocols.MQTT.clients.client_b
       - NETWORK_PROFILE=${NETWORK_PROFILE}
-      - MEASUREMENT_SUFFIX=${MEASUREMENT_SUFFIX}
 
   mqtt-capture:
     profiles: ["mqtt"]
@@ -60,8 +58,6 @@ services:
     cap_add:
       - NET_ADMIN
       - NET_RAW
-    volumes:
-      - ./output/pcap:/pcap
     entrypoint: [ "sleep", "infinity" ]
 
   # ========================
@@ -100,7 +96,6 @@ services:
       - http-net
     environment:
       - NETWORK_PROFILE=${NETWORK_PROFILE}
-      - MEASUREMENT_SUFFIX=${MEASUREMENT_SUFFIX}
 
   http-capture:
     profiles: ["http"]
@@ -111,8 +106,6 @@ services:
     cap_add:
       - NET_ADMIN
       - NET_RAW
-    volumes:
-      - ./output/pcap:/pcap
     entrypoint: [ "sleep", "infinity" ]
 
 #  # ========================
@@ -150,7 +143,6 @@ services:
       - coap-net
     environment:
       - NETWORK_PROFILE=${NETWORK_PROFILE}
-      - MEASUREMENT_SUFFIX=${MEASUREMENT_SUFFIX}
 
   coap-capture:
     profiles: ["coap"]
@@ -161,8 +153,6 @@ services:
     cap_add:
       - NET_ADMIN
       - NET_RAW
-    volumes:
-      - ./output/pcap:/pcap
     entrypoint: [ "sleep", "infinity" ]
 
   # ========================
@@ -191,7 +181,6 @@ services:
       - amqp-net
     environment:
       - NETWORK_PROFILE=${NETWORK_PROFILE}
-      - MEASUREMENT_SUFFIX=${MEASUREMENT_SUFFIX}
 
   # Receiver -- stays up and waits for published chunks from client A.
   amqp-client-b:
@@ -210,7 +199,6 @@ services:
     environment:
       - APP_COMMAND=python -m protocols.AMQP.receiver.amqp_receiver
       - NETWORK_PROFILE=${NETWORK_PROFILE}
-      - MEASUREMENT_SUFFIX=${MEASUREMENT_SUFFIX}
 
   amqp-capture:
     profiles: ["amqp"]
@@ -221,8 +209,6 @@ services:
     cap_add:
       - NET_ADMIN
       - NET_RAW
-    volumes:
-      - ./output/pcap:/pcap
     entrypoint: [ "sleep", "infinity" ]
 
   # ========================
@@ -260,7 +246,6 @@ services:
       - grpc-net
     environment:
       - NETWORK_PROFILE=${NETWORK_PROFILE}
-      - MEASUREMENT_SUFFIX=${MEASUREMENT_SUFFIX}
 
   grpc-capture:
     profiles: ["grpc"]
@@ -271,8 +256,6 @@ services:
     cap_add:
       - NET_ADMIN
       - NET_RAW
-    volumes:
-      - ./output/pcap:/pcap
     entrypoint: [ "sleep", "infinity" ]
 
   # ========================
@@ -310,7 +293,6 @@ services:
       - lwm2m-net
     environment:
       - NETWORK_PROFILE=${NETWORK_PROFILE}
-      - MEASUREMENT_SUFFIX=${MEASUREMENT_SUFFIX}
 
   lwm2m-capture:
     profiles: ["lwm2m"]
@@ -321,8 +303,6 @@ services:
     cap_add:
       - NET_ADMIN
       - NET_RAW
-    volumes:
-      - ./output/pcap:/pcap
     entrypoint: [ "sleep", "infinity" ]
 
 networks:

@@ -31,13 +31,22 @@ RUNNERS = {
     "coap": {"service": "coap-client",
              "module": "protocols.CoAP.client.coap_client",
              "has_qos": False},
+    "amqp": {"service": "amqp-client-a",
+             "module": "protocols.AMQP.client.amqp_client",
+             "has_qos": False},
+    "grpc": {"service": "grpc-client",
+             "module": "protocols.GRPC.client.grpc_client",
+             "has_qos": False},
+    "lwm2m": {"service": "lwm2m-client",
+              "module": "protocols.LWM2M.client.lwm2m_client",
+              "has_qos": False},
 }
 DEFAULT_MQTT_QOS = [1, 2]
 ```
 
 `run_protocol` discovers every `*.bin` in `DATA_DIR` (`./data`, sorted by size),
-and for MQTT iterates the QoS sweep (default `1 2`) × every file; for HTTP/CoAP
-it iterates just the files. Each combination becomes one `run_transfer()` call.
+and for MQTT iterates the QoS sweep (default `1 2`) × every file; for the other
+five protocols it iterates just the files. Each combination becomes one `run_transfer()` call.
 
 ---
 
@@ -71,6 +80,9 @@ else the legacy `output/pcap/`.
        "mqtt": ["mqtt-client-a", "mqtt-client-b"],
        "http": ["http-client"],
        "coap": [],                       # UDP — no segmentation offloads
+       "amqp": ["amqp-client-a", "amqp-client-b"],
+       "grpc": ["grpc-client"],
+       "lwm2m": [],                      # UDP — no segmentation offloads
    }
    OFFLOAD_SETTINGS = ["gro", "gso", "tso"]
    ```
@@ -78,17 +90,17 @@ else the legacy `output/pcap/`.
    header overhead; aborting would kill the whole benchmark).
 3. **Start tcpdump** (detached, in the sidecar):
    ```bash
-   docker compose exec -d <capture-svc> tcpdump -B 8192 -i eth0 -s 0 -w /tmp/<proto>_<label>.pcap
+   docker compose exec -d <capture-svc> tcpdump -B 32768 -i eth0 -s 0 -w /tmp/<proto>_<label>.pcap
    ```
-   - `-B 8192` — 8 MiB kernel capture buffer (`TCPDUMP_BUFFER_KB = 8192`). The
+   - `-B 32768` — 32 MiB kernel capture buffer (`TCPDUMP_BUFFER_KB = 32768`). The
      default ~1 MiB overflows and drops frames during fast large-file bursts.
    - `-s 0` — full snapshot length (capture every byte of every frame).
    - **Deliberately not `-U`**: packet-buffered mode does a `write(2)` per frame
      to the filesystem and the kernel ring overflows; default buffered mode
      drains the ring in bulk and flushes large chunks to disk.
-   - The pcap is written to `/tmp` (container-local overlay fs) rather than the
-     bind-mounted `/pcap`, because the volume mount is too slow for the high
-     packet rate of MTU-sized captures.
+   - The pcap is written to `/tmp` (container-local overlay fs) instead of a
+     bind mount, because bind mounts are too slow for the high packet rate of
+     MTU-sized captures; the file is copied out once the capture stops.
 4. **Wait for readiness** — polls `pgrep -x tcpdump` in the sidecar until it
    appears (5 s deadline) and raises if it never does.
 
@@ -104,11 +116,14 @@ output bind mount.
 
 ### 2c. `stop_capture_run(protocol, container_pcap_path, host_pcap_dir)`
 
-1. `pkill -TERM tcpdump` in the sidecar — SIGTERM makes tcpdump flush buffered
+1. **Settle** — waits `CAPTURE_SETTLE_SECONDS = 2.0` so the transfer tail
+   (final segments, ACKs, connection teardown) still in flight or sitting in
+   tcpdump's userspace buffer reaches the capture before it is stopped.
+2. `pkill -TERM tcpdump` in the sidecar — SIGTERM makes tcpdump flush buffered
    frames and close the pcap cleanly.
-2. **Wait for the process to exit** (poll `pgrep`; 5 s deadline) so the file is
+3. **Wait for the process to exit** (poll `pgrep`; 5 s deadline) so the file is
    guaranteed complete before it is copied.
-3. `docker compose cp <capture-svc>:/tmp/<proto>_<label>.pcap <run pcap dir>/`
+4. `docker compose cp <capture-svc>:/tmp/<proto>_<label>.pcap <run pcap dir>/`
    then `rm -f` the container-local copy.
 
 ---
@@ -153,8 +168,8 @@ def _measurement_file(protocol):
   (`META_FIELDS`), added on first write. Pre-existing legacy files (without the
   columns) are appended unchanged.
 - Rows are **appended**; the header is written only when the file is created.
-- Filenames no longer carry `MEASUREMENT_SUFFIX` — the run id + `run.json`
-  manifest carry the protocol/profile context. See
+- Filenames carry no suffix — the run id + `run.json` manifest carry the
+  protocol/profile context. See
   [network-chaos](network-chaos.md) for how `runner.py` sets up a run.
 
 All 16 pcap columns plus the client-side schemas are documented in
@@ -166,11 +181,11 @@ All 16 pcap columns plus the client-side schemas are documented in
 
 | Value | Definition |
 |---|---|
-| `duration_seconds` | time of the **last captured frame** minus the first (relative timestamps) |
+| `duration_seconds` | first to last frame matching the **protocol window filter** (the protocol's own filter, or `duration_filter` where the dissected frames alone don't span the transfer); falls back to the all-frames span when nothing matches |
 | `goodput_mbps` (pcap) | `file_size_bytes × 8 / (duration × 1_000_000)` — payload rate |
 | `wire_throughput_mbps` | `total_wire_bytes × 8 / (duration × 1_000_000)` — everything on the wire |
 | `overhead_percentage` | `(total_wire_bytes − file_size_bytes) / file_size_bytes × 100` |
-| `retransmissions` | TCP: `tcp.analysis.*` flags; CoAP: repeated CON message IDs (see pcap-analysis) |
+| `retransmissions` | TCP: `tcp.analysis.*` flags; CoAP/LwM2M: repeated CON message IDs (see pcap-analysis) |
 
 Client-side timing uses `time.perf_counter()` inside the container and is
 **not** the same clock domain as tshark — treat the two durations as

@@ -31,7 +31,7 @@ columns via `common/resource_monitor.py`):
 #### Metric semantics caveats
 
 - **Sender vs receiver rows.** MQTT, AMQP, gRPC and LwM2M record one row per
-  side per transfer. The `--side` flag (default `sender`) selects which rows
+  side per transfer. The `--side` flag (default `auto`) selects which rows
   feed the charts; without filtering, sender and receiver values would average
   together into meaningless midpoints (e.g. gRPC sender goodput counts from
   stream start, receiver goodput only from first chunk arrival).
@@ -99,20 +99,25 @@ def _chart_type_for(metric_cfg, args):
 Filters applied per row, in order:
 
 1. **`--protocols`** — caller passes only the selected protocols.
-2. **MQTT side** — `--mqtt-side sender|receiver|both` (default `sender`).
-   Non-MQTT protocols always pass.
-3. **MQTT QoS** — `--qos 1 2` filters the row's qos; HTTP/CoAP are unaffected.
+2. **Row side** — `--side` / `--mqtt-side auto|sender|receiver|both` (default
+   `auto`), applied to **any** protocol whose rows carry a non-empty `side`
+   column (MQTT/AMQP/gRPC log sender + receiver rows; LwM2M logs `side=client`).
+   `auto` uses sender rows when present, else the only side recorded;
+   protocols without a side column always pass.
+3. **MQTT QoS** — `--qos 1 2` filters the row's qos; non-MQTT protocols are unaffected.
 4. **`--file-sizes`** — keeps only rows whose size (MB) matches a listed value
    (tolerance 1e-6).
 5. **value parse** — `_to_number()` extracts the leading number from strings
    like `"2.71%"`, `"28.15 MB"`, or `"X"` (→ `None`, row skipped).
 
 The series key is `(protocol, qos)` — MQTT QoS 1 and 2 become **separate
-series**, HTTP/CoAP use `qos=None`. Each series maps `x label → [run values]`.
+series**, the other protocols use `qos=None`. Each series maps `x label → [run values]`.
 
 Labels:
-- client: `"{size:.3g} MB"` (+ `" | qos N"` for MQTT).
-- pcap: filename with `binary_file_` / `.bin` stripped (+ QoS).
+- client: size-only `"{size:.3g} MB"` — the (protocol, qos) series key already
+  separates MQTT QoS levels, so the label must not (a `| qos N` suffix would
+  split MQTT into extra x categories instead of grouping its bars).
+- pcap: derived from `file_size_bytes` (MB format).
 
 ---
 
@@ -141,7 +146,8 @@ def _error_bounds(values, error): # none | minmax (default) | std | q90
   `(info)` message).
 - `--figsize WxH` (e.g. `10x5`) or auto `(max(8, 1.5 × n_labels), 5)`.
 - `--dpi` (default 150).
-- Protocol colors: http `#1f77b4`, mqtt `#ff7f0e`, coap `#2ca02c`.
+- Protocol colors: http `#1f77b4`, mqtt `#ff7f0e`, coap `#2ca02c`,
+  amqp `#d62728`, grpc `#9467bd`, lwm2m `#8c564b`.
 - QoS rendering: `QOS_STYLES = {None:"-", "1":"--", "2":":"}` (line styles),
   `QOS_HATCH = {None:None, "1":"//", "2":"xx"}` (bar hatches).
 
@@ -201,11 +207,11 @@ path = <csv-dir>/<base>_measurements<suffix>.csv   # first existing match
 | `--csv-dir` | `./output` (`OUTPUT_DIR` env) | legacy flat CSVs (ignored with `--run`) |
 | `--outdir` | `<run_dir>/charts` (with `--run`) / `output/charts` | where PNGs are written |
 | `--suffix` | env → `_testing` → plain | legacy measurement set (ignored with `--run`) |
-| `--protocols` | all | subset of `http mqtt coap` |
+| `--protocols` | all | subset of `http mqtt coap amqp grpc lwm2m` |
 | `--metrics` | all | subset of the 13 metric names above |
 | `--file-sizes` | all | only these sizes in MB |
 | `--qos` | both | MQTT QoS levels |
-| `--mqtt-side` | `sender` | `sender` / `receiver` / `both` |
+| `--side` / `--mqtt-side` | `auto` | `auto` / `sender` / `receiver` / `both` — which row side to use for protocols that record one row per side |
 | `--chart-type` | `auto` | `auto` / `line` / `bar` |
 | `--agg` | `mean` | `mean` / `median` / `min` / `max` |
 | `--error` | `minmax` | `none` / `minmax` / `std` / `q90` |

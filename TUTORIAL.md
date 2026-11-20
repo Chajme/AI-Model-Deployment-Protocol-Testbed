@@ -1,13 +1,14 @@
-# Tutorial — Running the MQTT / HTTP / CoAP Transfer Testbed Reproducibly
+# Tutorial — Running the MQTT / HTTP / CoAP / AMQP / gRPC / LwM2M Transfer Testbed Reproducibly
 
-End-to-end guide to transfer benchmark files over the three IoT protocols, capture
+End-to-end guide to transfer benchmark files over the six IoT protocols, capture
 the traffic, analyze it with tshark, and get comparable numbers on any machine.
 
 ---
 
 ## 1. What this testbed does (architecture in 30 seconds)
 
-- Three **isolated Docker bridge networks**: `mqtt-net`, `http-net`, `coap-net`.
+- Six **isolated Docker bridge networks**: `mqtt-net`, `http-net`, `coap-net`,
+  `amqp-net`, `grpc-net`, `lwm2m-net`.
 - Each network has a **client**, a **server** (or broker), and a **capture sidecar**.
   The capture sidecar runs in the *server's network namespace*, so it sees the
   traffic between client and server exactly as the server does.
@@ -21,7 +22,7 @@ Manual stack (baseline, `docker-compose.yaml`) vs. automated stack
 
 | | docker-compose.yaml | docker-compose.automated.yaml |
 |---|---|---|
-| Network model | none (clean baseline) | `tc` chaos applied inside every container via `scripts/network_chaos.sh` |
+| Network model | none (clean baseline) | `tc` chaos applied inside every app container via `scripts/network_chaos.sh` (brokers are stock images and stay clean) |
 | Servers/clients | servers auto-run, clients idle | ALL containers default to"apply tc then stay idle" |
 | Driven by | `protocols/benchmark_manager.py` | `runner.py` (builds, up, waits, drives, tears down) |
 | Profiles | — | `good`, `iot`, `harsh`, `mobile`, `satellite` |
@@ -37,7 +38,7 @@ Manual stack (baseline, `docker-compose.yaml`) vs. automated stack
 | Python 3.11+ (with `venv`) | host harness + data generator | `python --version` |
 | Wireshark CLI `tshark` | pcap analysis (**optional**) | `tshark --version` (auto-detected: PATH or `C:\Program Files\Wireshark`; otherwise runs in the `netshoot` container) |
 
-No host-side MQTT/HTTP/CoAP libraries are needed — everything protocol-related runs
+No host-side protocol libraries are needed — everything protocol-specific runs
 inside the containers.
 
 > Windows note: use Docker Desktop with the **WSL2** backend, not Hyper-V, so the
@@ -76,7 +77,7 @@ python binary_file_generator.py
 cd ..
 ```
 
-Edit `data/binary_file_generator.py` to change sizes (default: 100 MB and 200 MB). The
+Edit `data/binary_file_generator.py` to change sizes (default: 5 MB, 20 MB and 50 MB). The
 harness auto-discovers every `*.bin` in `data/`. Alternatively drop any `*.bin` files there.
 
 ### 3.4 (Once) Build the images
@@ -106,6 +107,9 @@ Wait until every container shows `Up`. Then sanity-check:
 docker compose exec mqtt-capture  sh -c "grep -c eth0 /proc/net/dev"   # 1
 docker compose exec http-capture  sh -c "grep -c eth0 /proc/net/dev"   # 1
 docker compose exec coap-capture  sh -c "grep -c eth0 /proc/net/dev"   # 1
+docker compose exec amqp-capture  sh -c "grep -c eth0 /proc/net/dev"   # 1
+docker compose exec grpc-capture  sh -c "grep -c eth0 /proc/net/dev"   # 1
+docker compose exec lwm2m-capture sh -c "grep -c eth0 /proc/net/dev"   # 1
 # the MQTT receiver must be connected:
 docker logs mqtt-client-b-1           # "Connected to broker. Listening for files..."
 ```
@@ -134,9 +138,9 @@ CLI reference (`python protocols/benchmark_manager.py --help`):
 
 | Flag | Effect |
 |---|---|
-| `--protocol mqtt http coap` | which protocols to run (default: all) |
+| `--protocol mqtt http coap amqp grpc lwm2m` | which protocols to run (default: all) |
 | `--file <name.bin>` | single file instead of all `data/*.bin` |
-| `--qos 1 2` | MQTT QoS sweep (default `1 2`; ignored for http/coap) |
+| `--qos 1 2` | MQTT QoS sweep (default `1 2`; ignored for non-MQTT protocols) |
 | `--no-analyze` | capture pcaps but skip the tshark analysis step |
 
 ### What you get
@@ -190,7 +194,9 @@ drive every transfer → `docker compose down -v`.
 .venv\Scripts\python runner.py --profiles good iot harsh mobile satellite
 ```
 
-Network profiles (`scripts/network_chaos.sh`), applied on the client **and** server/ broker's `eth0`:
+Network profiles (`scripts/network_chaos.sh`), applied on the `eth0` of every
+client and of the http/coap/grpc/lwm2m servers (brokers are stock images and
+stay clean):
 
 | Profile | Delay | Loss | Rate | Models |
 |---|---|---|---|---|
@@ -226,6 +232,8 @@ host only):
 pip install -r requirements-charts.txt   # adds matplotlib
 
 python common/charts.py --run <run_id>   # charts ONE run's data into <run>/charts/
+python common/charts.py --runs <id> <id> # merge several runs (e.g. one sweep's
+                                         # per-protocol runs) into output/charts/
 python common/charts.py                   # legacy: reads ./output flat files
 ```
 
@@ -247,6 +255,7 @@ Selection:
 | Flag | Effect |
 |---|---|
 | `--run <run_id>` | chart one run directory under `--runs-dir` (preferred; overrides the legacy flags) |
+| `--runs <id> <id> ...` | merge several run directories into one chart set (PNGs go to `output/charts/`) |
 | `--runs-dir <dir>` | directory containing the `runs/` tree (default `./output`) |
 | `--suffix _testing` | legacy: pick a measurement set (default: `MEASUREMENT_SUFFIX` env, then `_testing`, then plain) |
 | `--csv-dir <dir>` | legacy: where the flat CSVs live (default `./output`) |
@@ -255,7 +264,7 @@ Selection:
 | `--metrics goodput_mbps overhead_percentage` | only these metrics (default: all) |
 | `--file-sizes 1 5 20 50` | only these file sizes in MB |
 | `--qos 1 2` | which MQTT QoS levels to include (default: both) |
-| `--mqtt-side sender\|receiver\|both` | which MQTT row side to use (default: sender) |
+| `--side` / `--mqtt-side auto\|sender\|receiver\|both` | which row side to use for protocols that record one row per side (default: `auto` — sender rows when present, else the only side recorded) |
 | `--no-client` / `--no-pcap` | skip the client-runtime or the pcap-analysis charts |
 | `--no-overview` | skip the combined dashboard |
 
@@ -340,7 +349,7 @@ pip install -r requirements.txt
 cd data && python binary_file_generator.py && cd ..
 docker compose build
 docker compose up -d
-docker compose ps                       # all 10 containers Up
+docker compose ps                       # all 20 services Up
 .venv\Scripts\python protocols\benchmark_manager.py --protocol http --file binary_file_1mb.bin
 # expect: Success! + PCAP ANALYSIS block + INTEGRITY OK
 #         run dir: output/runs/<timestamp>_http/ (run.json + CSVs + pcap/)

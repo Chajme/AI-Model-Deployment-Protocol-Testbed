@@ -134,8 +134,12 @@ def send_file(filename):
     monitor = ResourceMonitor(sample_interval=0.01)
     monitor.start()
 
-    start_time = time.time()
+    # The metadata publish+confirm is a control round trip, recorded
+    # separately in `latency`; the timed transfer window covers only the
+    # chunk transmission (mirrors the MQTT sender, where the metadata ACK
+    # wait is kept out of sender_duration).
     ack_latency = send_metadata(filename, total_chunks, checksum, channel)
+    start_time = time.time()
     send_chunks(filepath, total_chunks, channel)
     end_time = time.time()
     resource_stats = monitor.stop()
@@ -156,6 +160,7 @@ def send_file(filename):
             "avg_cpu_usage": f"{resource_stats['avg_cpu_pct']:.2f}%",
             "peak_ram_usage": f"{resource_stats['peak_rss_mb']:.2f} MB",
             "energy_est": f"{resource_stats['energy_j']:.4f}",
+            "sample_count": resource_stats["sample_count"],
         }
     ]
     write_to_file_amqp(measurements)

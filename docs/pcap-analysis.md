@@ -32,11 +32,11 @@ docker run --rm --network none \
     [-Y <display filter>] [-e field ...]
 ```
 
-`resolve_tshark()` still returns the host path when present and raises
-`FileNotFoundError` otherwise (kept for callers that specifically need the
-host binary); `run_tshark()` no longer requires it. `tshark_version()` records
-whichever binary is actually used in the run manifest. Override the fallback
-image with the `TSHARK_CONTAINER_IMAGE` environment variable.
+There is no separate `resolve_tshark()` helper: `run_tshark()` itself picks the
+host binary when one is found and transparently falls back to the container
+otherwise. `tshark_version()` records whichever binary is actually used in the
+run manifest. Override the fallback image with the `TSHARK_CONTAINER_IMAGE`
+environment variable.
 
 Every query uses the same base flags:
 
@@ -60,11 +60,31 @@ PROTOCOL_CONFIG = {
              "type_fields": ["mqtt.msgtype"],         # frame-type breakdown
              "is_tcp": True},                         # TCP retransmission path
     "http": {"filter": "http",
+             # The transfer window for HTTP must include the streamed body: a
+             # chunked PUT is dissected as a single `http` request frame -- the
+             # body travels as plain TCP data segments that the `http` filter
+             # never matches. Including data-carrying segments on the server port
+             # also anchors the window at the first uploaded byte and excludes
+             # the bare-socket latency probe (a SYN carries no payload).
+             "duration_filter": "http or (tcp.len > 0 and tcp.port == 8000)",
              "type_fields": ["http.request.method", "http.response.code"],
              "is_tcp": True},
     "coap": {"filter": "coap",
              "type_fields": ["coap.code"],            # 1 = GET, 3 = PUT, 69 = 4.05, 95 = 2.31, ...
              "is_tcp": False},                        # UDP → CoAP retransmission path
+    "amqp": {"filter": "amqp",
+             "type_fields": ["amqp.type"],
+             "is_tcp": True},
+    "grpc": {"filter": "http2",
+             "type_fields": ["http2.type"],           # 0 DATA, 1 HEADERS, 4 SETTINGS, 6 PING, ...
+             "is_tcp": True,
+             # Plaintext h2c is not auto-detected on custom ports (only via
+             # HTTP-upgrade or TLS ALPN), so tell tshark explicitly.
+             "decode_as": ["-d", "tcp.port==50051,http2"]},
+    # LwM2M runs over CoAP, so the wire analysis is identical to coap.
+    "lwm2m": {"filter": "coap",
+              "type_fields": ["coap.code"],
+              "is_tcp": False},
 }
 ```
 
@@ -78,8 +98,9 @@ PROTOCOL_CONFIG = {
 fields: frame.number, frame.len, frame.time_relative, ip.proto
 ```
 
-Accumulates `total_packets`, `total_wire_bytes` (sum of `frame.len`), and
-`duration = last frame.time_relative`.
+Accumulates `total_packets`, `total_wire_bytes` (sum of `frame.len`), and the
+all-frames span (`last frame.time_relative`) — used only as the duration
+fallback.
 
 ### Pass B — protocol frames
 
@@ -91,6 +112,24 @@ Accumulates `protocol_packets`, `protocol_wire_bytes`, and a per-type histogram
 `packet_types` (e.g. HTTP method/code pairs, MQTT msgtypes, CoAP codes). Frame
 type is the first non-empty type field (`_parse_frame_type` reads the column at
 `2 + field_idx` because `frame.number, frame.len` are the first two columns).
+
+### Pass B2 — protocol transfer window (duration)
+
+```
+-Y <duration_filter or filter>  fields: frame.time_relative
+```
+
+`duration_seconds` is the span from the **first to the last frame matching the
+protocol window filter**. The capture window also contains idle startup (the
+clients' connect waits happen inside it) and ARP/ICMPv6 noise, so anchoring
+duration on any captured frame inflated it and deflated goodput/throughput for
+small, fast transfers (ISSUES.md OPEN-1). Most protocols use their plain
+filter; `http` overrides it with `duration_filter` because a streaming PUT is
+dissected as a single `http` request frame — the body travels as plain TCP
+segments the `http` filter never matches. If nothing matches, the analyzer
+falls back to the all-frames span and prints a warning. Byte-derived metrics
+(overhead, wire bytes, retransmissions, packet counts) are unaffected by this
+choice.
 
 ### Pass C — retransmissions
 
@@ -104,7 +143,7 @@ TCP protocols:
 `retransmissions` = number of matching frames. This is Wireshark's own
 `tcp.analysis.*` tracking (based on sequence-number heuristics).
 
-CoAP (UDP) — custom, see §4.
+CoAP/LwM2M (UDP) — custom, see §4.
 
 ### Pass D — derived metrics
 

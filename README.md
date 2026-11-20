@@ -3,8 +3,9 @@
 A **reproducible, containerized benchmark harness** that compares how six IoT
 protocols — **MQTT**, **HTTP**, **CoAP**, **AMQP**, **gRPC**, and **LwM2M**
 (CoAP-based emulator) — move AI-model-sized binary files
-(250 KB up to 200 MB; generate the payloads with `data/binary_file_generator.py`,
-whose sizes are editable at the bottom) over a network. It measures each transfer **twice**:
+(250 KB up to 50 MB with the checked-in payload set; the shipped generator
+default is 5/20/50 MB, editable at the bottom of
+`data/binary_file_generator.py`) over a network. It measures each transfer **twice**:
 
 - **client side** — runtime metrics collected inside the sender (goodput,
   transfer time, latency, CPU, RAM, energy estimate, integrity),
@@ -29,7 +30,7 @@ results are comparable across machines without needing a real network.
   network namespace; `tcpdump` is started/stopped per run and the resulting
   pcap is analyzed with tshark.
 - **Capture-faithful measurement** — NIC segmentation offloads (GRO/GSO/TSO)
-  are disabled and tcpdump uses an 8 MiB kernel buffer so captures show real
+  are disabled and tcpdump uses a 32 MiB kernel buffer so captures show real
   MTU-sized frames without drops.
 - **Client-side resource metrics** — CPU %, peak RSS, and a TDP-based energy
   estimate sampled during each transfer.
@@ -39,8 +40,8 @@ results are comparable across machines without needing a real network.
   `satellite` applied with `tc netem` + `tbf` inside the containers (no real
   network needed, reproducible on any host with NET_ADMIN).
 - **Automated sweep** — `runner.py` builds, starts, waits, drives, and tears
-  down each protocol × profile combination; per-profile CSV files are kept
-  separate via a `MEASUREMENT_SUFFIX`.
+  down each protocol × profile combination; every experiment writes to its own
+  immutable run directory (`output/runs/<run_id>/`).
 - **Chart generation** — `common/charts.py` turns the CSVs into PNG comparison
   charts (line charts for size-dependent metrics, grouped bars for CPU/RAM/energy
   and the overview dashboard), with min–max bands across repeat runs and
@@ -78,9 +79,6 @@ Two compose stacks share the same image:
 | Driven by | `protocols/benchmark_manager.py` | `runner.py` (build → up → wait → drive → down) |
 | Profiles | — | `good`, `iot`, `harsh`, `mobile`, `satellite` |
 
-(`docker-compose.tc.yaml` is a legacy scratch file for single-service chaos
-testing; the two files above are the supported paths.)
-
 ---
 
 ## Repository layout
@@ -102,6 +100,13 @@ protocols/                     per-protocol containers and the orchestration ent
   HTTP/server/flask_server.py  Flask upload server (+ legacy nginx.conf WebDAV variant)
   CoAP/client/coap_client.py   blockwise PUT client (aiocoap)
   CoAP/server/coap_server.py   blockwise upload resource
+  AMQP/client/amqp_client.py   sender (1 MB chunks to RabbitMQ queues, publisher confirms)
+  AMQP/receiver/amqp_receiver.py  receiver (reassembles chunks, verifies SHA-256)
+  GRPC/client/grpc_client.py   client-streaming upload client (h2c, Ping latency probe)
+  GRPC/server/grpc_server.py   gRPC upload server (streaming receive + SHA-256)
+  GRPC/proto/file_transfer.proto  Upload / Ping service definition
+  LWM2M/client/lwm2m_client.py firmware-update emulator client (registration + blockwise pull)
+  LWM2M/server/lwm2m_server.py LwM2M server (registration endpoint + firmware repo)
 scripts/network_chaos.sh       tc netem + tbf profile applicator (entrypoint for chaos images)
 data/binary_file_generator.py  random-payload generator (edit sizes at the bottom)
 output/                        bind-mounted results (runs/<run_id>/, write_csv.py lives here)
@@ -109,7 +114,6 @@ common/runs.py                 run registry: create/read immutable run dirs + ma
 runner.py                      automated protocol × profile sweep
 docker-compose.yaml            manual stack
 docker-compose.automated.yaml  automated stack (chaos profiles)
-docker-compose.tc.yaml         legacy single-service chaos scratch file
 Dockerfile                     app image (python:3.13.3-slim + iproute2 + ethtool)
 ```
 
@@ -122,6 +126,9 @@ Dockerfile                     app image (python:3.13.3-slim + iproute2 + ethtoo
 | **MQTT** | file split into 1 MB chunks; metadata (filename/chunks/checksum/QoS) on `file/control`, chunks on `file/data`; **QoS 1 and 2 are both benchmarked** | receiver re-assembles and compares SHA-256 | publisher ACK latency (metadata) / first-chunk lag (receiver) |
 | **HTTP** | streaming `PUT /upload/<file>` with `X-Checksum` header | server computes SHA-256 and returns 400 on mismatch | raw TCP RTT (bare socket) + TTFB (response hook) |
 | **CoAP** | blockwise `PUT coap://coap-server/upload` (aiocoap auto-blockwise) | server compares SHA-256 in the query, returns 2.04 on match | RTT to `/.well-known/core` |
+| **AMQP** | file split into 1 MB chunks; metadata on the `file/control` queue, chunks on `file/data` (RabbitMQ), publisher confirms | receiver re-assembles and compares SHA-256 | metadata publish-confirm round trip |
+| **gRPC** | client-streaming `Upload` RPC over h2c; first chunk carries the protobuf Metadata, the rest are raw 1 MB data chunks | server verifies SHA-256 and renames `.part` → final atomically on match | unary `Ping` RPC round trip |
+| **LwM2M** | OMA firmware-update emulation: registration `POST /rd`, trigger `POST /update`, server PUTs the package URI to `/5/0/1`, client pulls it with a blockwise `GET` | client verifies SHA-256 of the pulled object | registration round trip |
 
 ---
 
@@ -129,16 +136,22 @@ Dockerfile                     app image (python:3.13.3-slim + iproute2 + ethtoo
 
 ### Client side (`output/runs/<run_id>/<proto>_measurements.csv`)
 
-| Metric | HTTP | MQTT | CoAP |
-|---|---|---|---|
-| transfer / sender / receiver time | ✓ | ✓ | ✓ |
-| latency (RTT / ACK / first chunk) | ✓ (RTT + TTFB) | ✓ | ✓ |
-| goodput (Mbps) | ✓ | ✓ | ✓ |
-| integrity OK (bool) | ✓ | ✓ | ✓ |
-| avg CPU % | ✓ | ✓ | ✓ |
-| peak RAM (MB) | ✓ | ✓ | ✓ |
-| energy estimate (J) | ✓ | ✓ | ✓ |
-| QoS level / side | — | ✓ (qos, sender/receiver) | — |
+| Metric | HTTP | MQTT | CoAP | AMQP | gRPC | LwM2M |
+|---|---|---|---|---|---|---|
+| transfer / sender / receiver time | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (download_duration) |
+| latency (RTT / ACK / first chunk) | ✓ (RTT + TTFB) | ✓ | ✓ | ✓ | ✓ (Ping) | ✓ (registration) |
+| goodput (Mbps) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| integrity OK (bool) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| avg CPU % | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| peak RAM (MB) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| energy estimate (J) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| QoS level / side | — | ✓ (qos, sender/receiver) | — | ✓ (sender/receiver) | ✓ (sender/receiver) | ✓ (side=client) |
+| sample_count | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+Every client row ends with a `sample_count` column — the number of CPU/RAM
+samples behind the row's averages. `ResourceMonitor` enforces a 0.2 s minimum
+sampling window so fast transfers still collect samples; treat rows with very
+few samples as low-confidence.
 
 Energy is estimated as `avg CPU fraction × TDP × duration`, where TDP defaults
 to 15 W and can be overridden with the `CPU_TDP_WATTS` environment variable.
@@ -148,9 +161,9 @@ to 15 W and can be overridden with the `CPU_TDP_WATTS` environment variable.
 | Column | Meaning |
 |---|---|
 | `total_packets` / `total_wire_bytes` | everything captured on the server's interface |
-| `protocol_packets` / `protocol_wire_bytes` | frames matching the protocol filter (`mqtt` / `http` / `coap`) |
-| `retransmissions` | TCP: `tcp.analysis.*` retransmission flags; CoAP: repeated **CON** message IDs per (MID, source) — an ACK echoing a request MID is *not* a retransmission |
-| `duration_seconds` | time from first to last captured frame |
+| `protocol_packets` / `protocol_wire_bytes` | frames matching the protocol filter (`mqtt` / `http` / `coap` / `amqp` / `http2`; LwM2M uses the `coap` filter) |
+| `retransmissions` | TCP: `tcp.analysis.*` retransmission flags; CoAP/LwM2M: repeated **CON** message IDs per (MID, source) — an ACK echoing a request MID is *not* a retransmission |
+| `duration_seconds` | first to last frame matching the protocol window filter (all-frames span only as a fallback) |
 | `total_overhead_bytes` / `overhead_percentage` | captured bytes above the payload size |
 | `wire_throughput_mbps` / `goodput_mbps` | wire-rate vs. payload-rate throughput |
 | `packet_types` | per-type frame breakdown (JSON), e.g. PUT/200, CON/ACK, MQTT msgtypes |
@@ -166,7 +179,7 @@ to 15 W and can be overridden with the `CPU_TDP_WATTS` environment variable.
 | Python 3.11+ (with `venv`) | host harness + data generator |
 | Wireshark CLI `tshark` | pcap analysis — **optional**: auto-detected on PATH / `C:\Program Files\Wireshark`; otherwise the analyzer runs `tshark` inside the `netshoot` container (Docker is already required) |
 
-No host-side MQTT/HTTP/CoAP libraries are required — everything protocol-related
+No host-side protocol libraries are required — everything protocol-related
 runs inside the containers. Chart generation additionally needs matplotlib
 (`requirements-charts.txt`).
 
@@ -186,7 +199,8 @@ cd data && python binary_file_generator.py && cd ..
 # 3. Build once (both stacks share the image)
 docker compose build
 
-# 4. Start the manual stack (10 containers; capture sidecars + receiver idle)
+# 4. Start the manual stack (20 services: 6 protocols x 3 roles + 2 brokers;
+#    capture sidecars + receivers idle)
 docker compose up -d
 docker compose ps
 
@@ -204,18 +218,18 @@ pip install -r requirements-charts.txt
 .\.venv\Scripts\python common\charts.py
 ```
 
-`benchmark_manager.py` flags: `--protocol http mqtt coap`, `--file <name.bin>`,
-`--qos 1 2` (MQTT sweep), `--no-analyze` (capture only).
+`benchmark_manager.py` flags: `--protocol http mqtt coap amqp grpc lwm2m`,
+`--file <name.bin>`, `--qos 1 2` (MQTT sweep), `--no-analyze` (capture only).
 
-`runner.py` flags: `--protocols http mqtt coap`, `--profiles good iot harsh
-mobile satellite` (default `mobile`).
+`runner.py` flags: `--protocols http mqtt coap amqp grpc lwm2m`,
+`--profiles good iot harsh mobile satellite` (default `mobile`).
 
 ---
 
 ## Network chaos profiles
 
-Applied by `scripts/network_chaos.sh` (netem + tbf) on the client **and**
-server/broker `eth0`:
+Applied by `scripts/network_chaos.sh` (netem + tbf) on the `eth0` of every
+client and of the http/coap/grpc/lwm2m servers:
 
 | Profile | Delay | Loss | Rate | Models |
 |---|---|---|---|---|
@@ -224,6 +238,14 @@ server/broker `eth0`:
 | `harsh` | 300 ms ±200 ms (50%) | Gilbert–Elliott (gemodel) | 256 Kbit | industrial edge |
 | `mobile` | 150 ms ±150 ms (60%) | 3% (40%) | 1 Mbit | unstable cellular |
 | `satellite` | 600 ms ±100 ms (20%) | 0.5% | 1 Mbit | GEO satellite |
+
+**Known asymmetry:** the mosquitto/rabbitmq brokers are stock images and are
+**not** shaped — their egress is clean. Broker protocols (MQTT/AMQP) therefore
+face one constrained link (the client uplink; the broker's delivery leg and
+PUBACK/confirm path are clean), while the direct protocols
+(HTTP/CoAP/gRPC/LwM2M) face shaping on both ends, which also degrades their
+ACK/response path. Keep this in mind when comparing protocols under the same
+profile.
 
 ---
 
@@ -259,8 +281,8 @@ with a legacy `--csv-dir`/`--suffix` fallback:
 - **Grouped bar charts** for CPU/RAM/energy and the overview dashboard.
 
 Selection: `--run`, `--runs`, `--runs-dir`, `--protocols`, `--metrics`,
-`--file-sizes`, `--qos`, `--mqtt-side`, `--no-client`, `--no-pcap`,
-`--no-overview`.
+`--file-sizes`, `--qos`, `--side`/`--mqtt-side` (default `auto`), `--no-client`,
+`--no-pcap`, `--no-overview`.
 Styling: `--chart-type auto|line|bar`, `--agg mean|median|min|max`,
 `--error none|minmax|std|q90`, `--x-scale`, `--y-scale`, `--dpi`, `--figsize`.
 
@@ -295,7 +317,7 @@ The full symptom → fix table lives in **TUTORIAL.md §8**. Common items:
 - `RTNETLINK answers: Operation not permitted` → Docker backend without
   NET_ADMIN; use Docker Desktop **WSL2** backend (Windows) or native Linux.
 - `capture looks incomplete ...` warning → dropped frames during capture;
-  re-run that transfer (offloads are already disabled and the buffer is 8 MiB).
+  re-run that transfer (offloads are already disabled and the buffer is 32 MiB).
 
 ---
 

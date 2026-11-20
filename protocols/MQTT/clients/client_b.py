@@ -60,15 +60,28 @@ def _transfer_completed_handler():
     integrity_ok = (expected_checksum == actual_checksum)
 
     file_size_bytes = received_bytes
-    goodput_mbps = (file_size_bytes * 8) / (transfer_duration * 1_000_000)
+
+    # A single-chunk transfer spans no measurable arrival window (first
+    # chunk arrival == last chunk arrival), so duration/goodput would be
+    # noise (a sub-millisecond window yields four-digit Mbps). Record them
+    # as not applicable; the first-chunk lag and the integrity result stay
+    # meaningful.
+    single_chunk = received_chunks < 2
+
+    if single_chunk:
+        print("Single-chunk transfer: receiver duration/goodput not applicable.")
+        goodput_mbps = None
+    else:
+        goodput_mbps = (file_size_bytes * 8) / (transfer_duration * 1_000_000)
 
     if integrity_ok:
         print(f"File {current_filename} OK (checksum match)")
     else:
         print(f"File {current_filename} CORRUPTED (checksum mismatch)")
     print(f"Latency (First Chunk Lag): {start_latency:.4f}s")
-    speed = (file_size_mb / transfer_duration) if transfer_duration > 0 else 0
-    print(f"Receiver Time: {transfer_duration:.2f} seconds ({speed:.2f} MB/s)")
+    if not single_chunk:
+        speed = (file_size_mb / transfer_duration) if transfer_duration > 0 else 0
+        print(f"Receiver Time: {transfer_duration:.2f} seconds ({speed:.2f} MB/s)")
 
     measurements = [
         {
@@ -77,13 +90,14 @@ def _transfer_completed_handler():
             "side": "receiver",
             "file_size": file_size_mb,
             "sender_duration": "X",
-            "receiver_duration": f"{transfer_duration:.2f}",
+            "receiver_duration": "X" if single_chunk else f"{transfer_duration:.2f}",
             "latency": f"{start_latency:.4f}",
-            "goodput_mbps": f"{goodput_mbps:.3f}",
+            "goodput_mbps": "X" if single_chunk else f"{goodput_mbps:.3f}",
             "integrity_ok": integrity_ok,
             "avg_cpu_usage": f"{resource_stats.get('avg_cpu_pct', 0):.2f}%",
             "peak_ram_usage": f"{resource_stats.get('peak_rss_mb', 0):.2f} MB",
             "energy_est": f"{resource_stats.get('energy_j', 0):.4f}",
+            "sample_count": resource_stats.get("sample_count", ""),
         }
     ]
     write_to_file_mqtt(measurements)

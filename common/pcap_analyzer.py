@@ -16,6 +16,13 @@ PROTOCOL_CONFIG = {
     },
     "http": {
         "filter": "http",
+        # The transfer window for HTTP must include the streamed body: a
+        # chunked PUT is dissected as a single `http` request frame -- the
+        # body travels as plain TCP data segments that the `http` filter
+        # never matches. Including data-carrying segments on the server port
+        # also anchors the window at the first uploaded byte and excludes
+        # the bare-socket latency probe (a SYN carries no payload).
+        "duration_filter": "http or (tcp.len > 0 and tcp.port == 8000)",
         "type_fields": ["http.request.method", "http.response.code"],
         "is_tcp": True,
     },
@@ -72,24 +79,6 @@ def _find_host_tshark() -> str | None:
     if discovered:
         return discovered
     return next((p for p in _HOST_TSHARK_CANDIDATES if os.path.exists(p)), None)
-
-
-def resolve_tshark() -> str:
-    """Return the path to a *host* tshark, checking PATH and common locations.
-
-    Raises FileNotFoundError when no host tshark exists. Analysis itself does
-    not require one: run_tshark() transparently falls back to tshark inside the
-    netshoot container, and tshark_version() describes whichever is used.
-    """
-    discovered = _find_host_tshark()
-    if not discovered:
-        raise FileNotFoundError(
-            "tshark not found on PATH (and no Wireshark install in the usual "
-            "locations). Install Wireshark (tshark is bundled with it) or add "
-            "its folder to PATH; pcap analysis will otherwise run tshark in "
-            f"the '{TSHARK_CONTAINER_IMAGE}' container."
-        )
-    return discovered
 
 
 def _docker_mount_path(path) -> str:
@@ -261,8 +250,6 @@ def analyze_pcap(
         total_wire_bytes += frame_len
         last_timestamp = max(last_timestamp, timestamp)
 
-    duration = last_timestamp
-
     # ---------------------------------------------------------
     # 2. Protocol packets
     # ---------------------------------------------------------
@@ -303,6 +290,54 @@ def analyze_pcap(
             proto_packet_types[frame_type] = (
                 proto_packet_types.get(frame_type, 0) + 1
             )
+
+    # ---------------------------------------------------------
+    # 2a. Protocol-filtered transfer window (duration)
+    # ---------------------------------------------------------
+    # Duration from the first to the last frame of the protocol's own
+    # traffic (duration_filter). The capture window also contains idle
+    # startup (the clients' connect waits happen inside the capture window)
+    # and ARP/ICMPv6 noise, so anchoring the window on any captured frame
+    # inflated duration and deflated goodput/throughput for small, fast
+    # transfers (ISSUES.md OPEN-1). Byte-derived metrics (overhead, wire
+    # bytes, retransmissions, packet counts) are unaffected by this choice.
+    # Most protocols use the plain protocol filter; `duration_filter`
+    # overrides it where the dissected protocol frames alone do not span
+    # the transfer (HTTP streaming bodies, see PROTOCOL_CONFIG).
+
+    window_filter = cfg.get("duration_filter", cfg["filter"])
+    window_output = run_tshark(
+        pcap_file,
+        display_filter=window_filter,
+        fields=["frame.time_relative"],
+        extra_args=decode_as,
+    )
+
+    first_proto_timestamp = None
+    last_proto_timestamp = None
+
+    for line in window_output.strip().splitlines()[1:]:
+        if not line.strip():
+            continue
+        parts = list(csv.reader([line]))[0]
+        if not parts:
+            continue
+        try:
+            timestamp = float(parts[0])
+        except ValueError:
+            continue
+        if first_proto_timestamp is None:
+            first_proto_timestamp = timestamp
+        last_proto_timestamp = timestamp
+
+    if first_proto_timestamp is not None:
+        duration = last_proto_timestamp - first_proto_timestamp
+    else:
+        duration = last_timestamp
+        print(
+            "  WARNING: no frames matched the protocol window filter; "
+            "duration falls back to the all-frames span."
+        )
 
     # ---------------------------------------------------------
     # 3. Retransmissions (TCP-based protocols only)
@@ -465,19 +500,3 @@ def print_result(result):
         print(f"{packet_type:20} {count}")
 
     print("===================================\n")
-
-
-if __name__ == "__main__":
-    pcap = "output/pcap/mqtt_binary_file_1mb.bin_1.pcap"
-    file_size = 1024 * 1024
-    filename = "binary_file_1mb.bin"
-
-    result = analyze_pcap(
-        pcap,
-        file_size,
-        protocol="mqtt",
-        filename=filename,
-        qos_level=1,
-    )
-
-    print_result(result)

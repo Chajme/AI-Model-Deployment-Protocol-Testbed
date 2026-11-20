@@ -108,6 +108,7 @@ def write_to_file_http(data: list[dict]):
         'avg_cpu_usage',
         'peak_ram_usage',
         'energy_est',
+        'sample_count',
     ]
     write_to_csv(output_path, fieldnames, data)
 
@@ -126,6 +127,7 @@ def write_to_file_mqtt(data: list[dict]):
         'avg_cpu_usage',
         'peak_ram_usage',
         'energy_est',
+        'sample_count',
     ]
     write_to_csv(output_path, fieldnames, data)
 
@@ -141,6 +143,7 @@ def write_to_file_coap(data: list[dict]):
         'avg_cpu_usage',
         'peak_ram_usage',
         'energy_est',
+        'sample_count',
     ]
     write_to_csv(output_path, fieldnames, data)
 
@@ -158,6 +161,7 @@ def write_to_file_amqp(data: list[dict]):
         'avg_cpu_usage',
         'peak_ram_usage',
         'energy_est',
+        'sample_count',
     ]
     write_to_csv(output_path, fieldnames, data)
 
@@ -175,6 +179,7 @@ def write_to_file_grpc(data: list[dict]):
         'avg_cpu_usage',
         'peak_ram_usage',
         'energy_est',
+        'sample_count',
     ]
     write_to_csv(output_path, fieldnames, data)
 
@@ -191,6 +196,7 @@ def write_to_file_lwm2m(data: list[dict]):
         'avg_cpu_usage',
         'peak_ram_usage',
         'energy_est',
+        'sample_count',
     ]
     write_to_csv(output_path, fieldnames, data)
 

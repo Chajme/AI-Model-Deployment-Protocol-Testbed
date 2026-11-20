@@ -9,15 +9,25 @@ class ResourceMonitor:
     Energy is estimated from average CPU load × system TDP.
 
     Usage:
-        monitor = ResourceMonitor(sample_interval=0.1)
+        monitor = ResourceMonitor(sample_interval=0.05)
         monitor.start()
         # ... do work ...
         stats = monitor.stop()
+
+    stop() keeps sampling until at least MIN_WINDOW_SECONDS have elapsed
+    since start(): fast transfers (tens of milliseconds) would otherwise
+    collect zero or one sample and report 0% CPU / 0 J (ISSUES.md OPEN-2).
+    The returned `sample_count` records how many samples back the averages;
+    rows with very few samples should be treated as low-confidence.
+    stop() is idempotent — later calls return the same stats.
     """
 
     # Conservative default TDP in watts — override with your actual CPU TDP.
     # On Linux you can read: /sys/class/powercap/intel-rapl/intel-rapl:0/constraint_0_power_limit_uw
     DEFAULT_TDP_WATTS = float(os.environ.get("CPU_TDP_WATTS", 15.0))
+
+    # Minimum sampling window so short transfers still yield usable averages.
+    MIN_WINDOW_SECONDS = 0.2
 
     def __init__(self, sample_interval: float = 0.05):
         self.sample_interval = sample_interval
@@ -27,6 +37,7 @@ class ResourceMonitor:
         self._thread: threading.Thread | None = None
         self._start_time: float = 0.0
         self._end_time: float = 0.0
+        self._stats: dict | None = None
 
         # Use the whole process tree (client + any subprocesses)
         self._proc = psutil.Process(os.getpid())
@@ -51,10 +62,24 @@ class ResourceMonitor:
         self._rss_samples.clear()
         self._stop_event.clear()
         self._start_time = time.perf_counter()
+        self._stats = None
         self._thread = threading.Thread(target=self._sample_loop, daemon=True)
         self._thread.start()
 
-    def stop(self) -> dict:
+    def stop(self, min_window: float | None = None) -> dict:
+        # Idempotent: a second stop() (e.g. in a finally block) returns the
+        # stats already computed by the first one.
+        if self._stats is not None:
+            return self._stats
+
+        # Keep sampling until the minimum window has elapsed so short
+        # transfers still collect a handful of samples (OPEN-2).
+        if min_window is None:
+            min_window = self.MIN_WINDOW_SECONDS
+        remaining = min_window - (time.perf_counter() - self._start_time)
+        if remaining > 0:
+            time.sleep(remaining)
+
         self._stop_event.set()
         self._end_time = time.perf_counter()
         if self._thread:
@@ -74,9 +99,10 @@ class ResourceMonitor:
         cpu_fraction  = avg_cpu_pct / 100.0
         energy_j      = cpu_fraction * self.DEFAULT_TDP_WATTS * duration_s
 
-        return {
+        self._stats = {
             "avg_cpu_pct":   round(avg_cpu_pct, 3),
             "peak_rss_mb":   round(peak_rss_mb, 3),
             "energy_j":      round(energy_j, 6),
             "sample_count":  len(self._cpu_samples),
         }
+        return self._stats

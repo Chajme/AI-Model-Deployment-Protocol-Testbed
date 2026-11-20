@@ -21,7 +21,7 @@ python protocols/benchmark_manager.py [--protocol mqtt http coap amqp grpc lwm2m
 |---|---|---|---|
 | `--protocol` | nargs+ (choices `mqtt http coap amqp grpc lwm2m`) | all | which protocols to run |
 | `--file` | str | all `data/*.bin` | a single payload file |
-| `--qos` | nargs+ int | `1 2` | MQTT QoS sweep (ignored for HTTP/CoAP) |
+| `--qos` | nargs+ int | `1 2` | MQTT QoS sweep (ignored for non-MQTT protocols) |
 | `--no-analyze` | flag | off | capture pcaps but skip tshark analysis + CSV row |
 
 Behavior notes:
@@ -54,7 +54,7 @@ python runner.py [--protocols mqtt http coap amqp grpc lwm2m]
 Per (protocol × profile) it: creates a run
 (`common/runs.new_run` → `output/runs/<timestamp>_<proto>_<profile>/`), sets
 `COMPOSE_FILE=docker-compose.automated.yaml`, `COMPOSE_PROFILES=<proto>`,
-`NETWORK_PROFILE=<profile>`, `MEASUREMENT_SUFFIX=<proto>_<profile>`, `RUN_ID`
+`NETWORK_PROFILE=<profile>`, `RUN_ID`
 into the **process environment**, writes the `.active_run` marker, builds
 images, `docker compose up -d`, probes reachability, calls
 `run_protocol(protocol)`, then `docker compose down -v` in a `finally`.
@@ -94,8 +94,10 @@ Generates `binary_file_<size>kb.bin` / `binary_file_<size>mb.bin` with
 `os.urandom`. Sizes are edited at the bottom of the file:
 
 ```python
-file_sizes_kb = []          # e.g. [250]
-file_sizes_mb = [100, 200]  # e.g. [1, 5, 20, 50]
+# file_sizes_kb = [250]
+file_sizes_kb = []
+file_sizes_mb = [5, 20, 50]
+# file_sizes_mb = [100, 200]
 ```
 
 Existing files are skipped (idempotent). Files are random — **copy** them
@@ -111,6 +113,9 @@ between machines for reproducibility; don't regenerate.
 | `protocols.MQTT.clients.client_b` | — | receiver; subscribes and runs forever |
 | `protocols.HTTP.client.http_client` | `--file <name>` | optional; default all `*.bin` |
 | `protocols.CoAP.client.coap_client` | `--file <name>` | optional; default all `*.bin` |
+| `protocols.AMQP.client.amqp_client` | `--file <name>` | sender; publisher confirms |
+| `protocols.GRPC.client.grpc_client` | `--file <name>` | client-streaming upload + Ping latency |
+| `protocols.LWM2M.client.lwm2m_client` | `--file <name>` | firmware-update flow emulator |
 
 All transfer clients sleep ~5 s at startup to let the server/broker come up;
 after a `--file` run they keep the container alive ~3 s, otherwise ~30 s.
@@ -124,7 +129,6 @@ after a `--file` run they keep the container alive ~3 s, otherwise ~30 s.
 | `DATA_DIR` | harness, file_manager | `./data` | payload directory |
 | `OUTPUT_DIR` | write_csv, file_manager, charts, runs | `./output` (host) / `/app/output` (container) | results directory (runs live under `<OUTPUT_DIR>/runs/`) |
 | `RUN_ID` | write_csv, runs | `` (empty) | active run id (containers fall back to the `.active_run` marker) |
-| `MEASUREMENT_SUFFIX` | runner, manifest | `` (empty) | recorded in `run.json`; no longer affects filenames |
 | `NETWORK_PROFILE` | network_chaos.sh, manifest | `iot` | which tc profile to apply (recorded per row + manifest) |
 | `APP_COMMAND` | network_chaos.sh | unset | command to run after tc (servers/receiver) |
 | `COMPOSE_FILE` / `COMPOSE_PROFILES` | runner.py | — | selects the automated stack + protocol |
@@ -137,7 +141,7 @@ after a `--file` run they keep the container alive ~3 s, otherwise ~30 s.
 
 ```bash
 docker compose build                                   # build the app image (once)
-docker compose up -d                                   # manual stack (all 10)
+docker compose up -d                                   # manual stack (all 20 services)
 docker compose ps                                      # verify status
 docker compose exec <svc> <cmd>                        # manual introspection
 docker compose down                                    # stop (keep volumes/data)

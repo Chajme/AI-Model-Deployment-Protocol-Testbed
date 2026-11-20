@@ -30,7 +30,6 @@ MANIFEST_FILENAME = "run.json"
 # or unrelated vars).
 MANIFEST_ENV_KEYS = [
     "NETWORK_PROFILE",
-    "MEASUREMENT_SUFFIX",
     "DATA_DIR",
     "OUTPUT_DIR",
 ]

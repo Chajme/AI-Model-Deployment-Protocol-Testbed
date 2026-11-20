@@ -103,16 +103,17 @@ def send_file(filename, qos_level):
     monitor = ResourceMonitor(sample_interval=0.01)
     monitor.start()
 
-    start_time = time.time()
     msg_info, metadata_payload_len = send_metadata(filename, total_chunks, checksum, qos_level, client)
 
+    # Wait for the broker's metadata ACK OUTSIDE the timed transfer window:
+    # a lost ACK must not inject up to 10 s of dead waiting into
+    # sender_duration (the metadata round trip is recorded separately in
+    # `latency`). Timing starts only when chunk transmission begins.
     if not metadata_ack_event.wait(timeout=10):
         print("WARNING: Timed out waiting for metadata ACK, proceeding anyway.")
 
-
+    start_time = time.time()
     chunk_lengths = send_chunks(filepath, total_chunks, qos_level, client)
-
-
     end_time = time.time()
     client.loop_stop()
     client.disconnect()
@@ -134,6 +135,7 @@ def send_file(filename, qos_level):
             "avg_cpu_usage": f"{resource_stats['avg_cpu_pct']:.2f}%",
             "peak_ram_usage": f"{resource_stats['peak_rss_mb']:.2f} MB",
             "energy_est": f"{resource_stats['energy_j']:.4f}",
+            "sample_count": resource_stats["sample_count"],
         }
     ]
     write_to_file_mqtt(measurements)

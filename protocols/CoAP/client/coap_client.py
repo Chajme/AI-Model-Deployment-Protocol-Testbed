@@ -17,10 +17,11 @@ MAX_RETRIES = 3
 
 async def get_latency(context: Context, uri: str) -> float:
     """
-    Measure CoAP round-trip latency using GET /.well-known/core — a standard
-    discovery endpoint every CoAP server is expected to serve. This avoids
-    sending a GET to a PUT-only resource (which would return 4.05 Method Not
-    Allowed and measure an error round-trip instead of real latency).
+    Measure a CoAP round trip using GET /.well-known/core — a standard
+    discovery endpoint. The upload server does not expose a discovery
+    document, so the answer is usually a 4.04, but the exchange still
+    times one full CON request/response round trip, which is what the
+    latency column records.
     """
     parsed = urlparse(uri)
     ping_uri = f"coap://{parsed.hostname}/.well-known/core"
@@ -101,6 +102,7 @@ async def transfer_file(context: Context, filename: str) -> None:
         "avg_cpu_usage":   f"{resource_stats['avg_cpu_pct']:.2f}%",
         "peak_ram_usage":  f"{resource_stats['peak_rss_mb']:.2f} MB",
         "energy_est":      f"{resource_stats['energy_j']:.4f}",
+        "sample_count":    resource_stats["sample_count"],
     }])
 
     await asyncio.sleep(3)

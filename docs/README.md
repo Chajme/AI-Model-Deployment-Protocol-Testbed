@@ -1,6 +1,7 @@
 # Documentation — AI-Model-Deployment-Protocol-Testbed
 
-Code-level documentation for the MQTT / HTTP / CoAP transfer benchmark testbed.
+Code-level documentation for the six-protocol (MQTT / HTTP / CoAP / AMQP /
+gRPC / LwM2M) transfer benchmark testbed.
 Start with [architecture.md](architecture.md) for the big picture, then follow
 the pipeline through the rest of the docs.
 
@@ -8,7 +9,7 @@ the pipeline through the rest of the docs.
 |---|---|
 | [architecture.md](architecture.md) | networks, containers, compose stacks, image build, data flow overview |
 | [measurement-pipeline.md](measurement-pipeline.md) | one transfer end-to-end: capture → transfer → analysis → CSV |
-| [protocol-transfers.md](protocol-transfers.md) | per-protocol internals: MQTT chunking/QoS, HTTP streaming, CoAP blockwise |
+| [protocol-transfers.md](protocol-transfers.md) | per-protocol internals: MQTT/AMQP chunked publish, HTTP streaming, CoAP/LwM2M blockwise, gRPC streaming |
 | [pcap-analysis.md](pcap-analysis.md) | `common/pcap_analyzer.py`: tshark filters, fields, metrics, retransmission detection |
 | [metrics-schema.md](metrics-schema.md) | exact CSV schemas and column semantics for every producer |
 | [network-chaos.md](network-chaos.md) | `runner.py` sweep + `tc` profiles (netem/tbf parameters) |
@@ -42,7 +43,7 @@ protocols/<proto>/client  ─►  output/write_csv.py  (…_measurements.csv)
   protocol-specific behavior lives inside the client containers.
 - Two **capture-critical details** are handled before each run:
   segmentation offloads (GRO/GSO/TSO) are disabled so the pcap shows real
-  MTU-sized frames, and tcpdump uses an 8 MiB kernel buffer so bursts don't
+  MTU-sized frames, and tcpdump uses a 32 MiB kernel buffer so bursts don't
   drop frames (see [pcap-analysis.md](pcap-analysis.md)).
 - Every measurement is written **twice**: client-side runtime metrics (from the
   sender/receiver process) and packet-side metrics (from tshark). The two views

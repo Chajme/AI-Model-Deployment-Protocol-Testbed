@@ -196,13 +196,3 @@ def _resolve_service(protocol: str) -> str:
             f"Unknown protocol {protocol!r}. Supported: {list(CAPTURE_SERVICES)}"
         )
     return CAPTURE_SERVICES[protocol]
-
-
-if __name__ == "__main__":
-    start_capture_run("5mb_run1")
-    # ... send the 5MB file here ...
-    stop_capture_run()
-
-    start_capture_run("50mb_run1", protocol="http")
-    # ... send the 50MB file here ...
-    stop_capture_run(protocol="http")

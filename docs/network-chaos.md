@@ -14,8 +14,13 @@ BASE_ENV = os.environ.copy()
 PROBE = {
     "mqtt": ("mqtt-client-a", "mosquitto-broker", 1883),
     "http": ("http-client",  "http-server",       8000),
+    "amqp": ("amqp-client-a", "rabbitmq-broker",  5672),
+    "grpc": ("grpc-client",  "grpc-server",       50051),
 }
-COAP_SETTLE_SECONDS = 8
+UDP_SETTLE_SECONDS = {
+    "coap": 8,
+    "lwm2m": 8,
+}
 ```
 
 ### Per experiment
@@ -26,7 +31,7 @@ def run_experiment(protocol, profile):
     env["COMPOSE_FILE"]      = "docker-compose.automated.yaml"
     env["COMPOSE_PROFILES"]  = protocol
     env["NETWORK_PROFILE"]   = profile
-    env["MEASUREMENT_SUFFIX"]= f"{protocol}_{profile}"
+    env["RUN_ID"]            = run_id
     os.environ.update(env)          # <-- critical: host process inherits the same env
 
     docker compose --profile <protocol> up -d          # only that protocol's services
@@ -42,30 +47,30 @@ def run_experiment(protocol, profile):
   (`output/runs/<timestamp>_<proto>_<profile>/` via `common/runs.new_run`) so
   every profile's rows are cleanly separated without suffix parsing. The
   `os.environ.update(env)` line is still required so the host process inherits
-  `RUN_ID` (and `MEASUREMENT_SUFFIX`, recorded in `run.json`) and the
-  **host-side** pcap writer writes to the same run directory as the client
-  containers. The `.active_run` marker in `output/` is how the containers
-  (which lack `RUN_ID`) resolve the same run through the bind mount.
+  `RUN_ID` and the **host-side** pcap writer writes to the same run directory
+  as the client containers. The `.active_run` marker in `output/` is how the
+  containers (which lack `RUN_ID`) resolve the same run through the bind mount.
 
 ### Reachability probe
 
 ```python
 def wait_for_service(env, protocol, timeout=60):
-    if protocol == "coap":
-        time.sleep(COAP_SETTLE_SECONDS)        # UDP: no TCP connect to probe
+    if protocol in UDP_SETTLE_SECONDS:
+        time.sleep(UDP_SETTLE_SECONDS[protocol])  # UDP: no TCP connect to probe
         return
     # else: docker compose exec <client> python -c
     #   "import socket; socket.create_connection((<host>, <port>), timeout=2)"
     # retried every 1s until the 60s deadline (raises RuntimeError)
 ```
 
-CoAP gets a fixed 8 s settle delay instead of a probe because it is UDP.
+CoAP and LwM2M get a fixed 8 s settle delay instead of a probe because they
+are UDP.
 
 ### CLI
 
 ```bash
 python runner.py --protocols http mqtt --profiles good harsh satellite
-# --protocols default: all (http mqtt coap)
+# --protocols default: all (http mqtt coap amqp grpc lwm2m)
 # --profiles   default: [mobile]
 ```
 
@@ -77,7 +82,8 @@ protocol, then iterates `itertools.product(protocols, profiles)`.
 
 ## 2. `scripts/network_chaos.sh` — the tc applicator
 
-The entry point of every automated-stack service:
+The entry point of every automated-stack app service (the stock broker images
+and netshoot captures don't run it):
 
 ```sh
 PROFILE=${NETWORK_PROFILE:-iot}
@@ -98,9 +104,18 @@ Two layers of qdisc are added per profile:
 1. **`netem`** (root) — delay, loss, duplicate, reorder (jitter distribution %).
 2. **`tbf`** (child) — token-bucket rate cap (`rate`, `burst`, `latency`).
 
-The **same profile is applied on both the client and the server/broker** `eth0`
-(plus the capture sidecar, which shares the server namespace). This models an
-end-to-end link, not a one-directional impairment.
+The **same profile is applied on the `eth0` of every client and of the
+http/coap/grpc/lwm2m servers** (plus the capture sidecar, which shares the
+server namespace). This models an end-to-end link, not a one-directional
+impairment — for those protocols.
+
+**Brokers are not shaped.** `mosquitto-broker` and `rabbitmq-broker` are stock
+images whose entry points the harness does not control, so no `tc` is applied
+on their side. Broker protocols (MQTT/AMQP) therefore face **one** constrained
+link (the client uplink; the broker's delivery leg and PUBACK/confirm path are
+clean), while the direct protocols (HTTP/CoAP/gRPC/LwM2M) face shaping on
+**both** ends, which also degrades their ACK/response path. Keep this
+asymmetry in mind when comparing protocols under the same profile.
 
 ### Profile parameters (exact tc values)
 
@@ -129,8 +144,8 @@ Unknown profiles exit 1.
 - Because tc is inside the namespace, the **capture sidecar sees post-tc
   traffic** (the frames that actually crossed the emulated link).
 - Retransmission metrics become meaningful under loss profiles:
-  - TCP (MQTT/HTTP) — `tcp.analysis.*` counts retransmits.
-  - CoAP — repeated CON MIDs count retransmits (see pcap-analysis).
+  - TCP (MQTT/HTTP/AMQP/gRPC) — `tcp.analysis.*` counts retransmits.
+  - CoAP/LwM2M — repeated CON MIDs count retransmits (see pcap-analysis).
 - On heavily throttled profiles (e.g. 50 MB under `harsh` at 256 kbit ≈ 26 min),
   capture completeness warnings may appear if the host can't keep up; the
   per-run pcap + CSV still land in the run directory.

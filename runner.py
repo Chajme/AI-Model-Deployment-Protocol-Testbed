@@ -81,16 +81,15 @@ def run_experiment(protocol, profile, run_id=None):
     env["COMPOSE_FILE"] = COMPOSE_FILE_AUTOMATED
     env["COMPOSE_PROFILES"] = protocol
     env["NETWORK_PROFILE"] = profile
-    env["MEASUREMENT_SUFFIX"] = f"{protocol}_{profile}"
     env["RUN_ID"] = rid
 
     # Publish the experiment environment BEFORE creating the run: new_run()
     # snapshots os.environ into the manifest, so setting it afterwards records
-    # the previous run's NETWORK_PROFILE / MEASUREMENT_SUFFIX (or empty for the
-    # first run). run_protocol() (which runs in this process and drives the
+    # the previous run's NETWORK_PROFILE (or empty for the first run).
+    # run_protocol() (which runs in this process and drives the
     # capture/analysis/CSV writing) also needs to see the same
-    # COMPOSE_FILE / COMPOSE_PROFILES / MEASUREMENT_SUFFIX / RUN_ID as the
-    # containers, otherwise pcap rows land outside the run dir.
+    # COMPOSE_FILE / COMPOSE_PROFILES / RUN_ID as the containers, otherwise
+    # pcap rows land outside the run dir.
     os.environ.update(env)
 
     runs.new_run(output_dir, protocol, profile, run_id=rid)
