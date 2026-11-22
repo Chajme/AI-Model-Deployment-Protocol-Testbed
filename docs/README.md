@@ -16,6 +16,7 @@ the pipeline through the rest of the docs.
 | [charts.md](charts.md) | `common/charts.py`: metric catalog, auto line/bar, series, aggregation, flags |
 | [cli-reference.md](cli-reference.md) | CLI references and environment variables for every entry point |
 | [troubleshooting.md](troubleshooting.md) | symptom → root cause → fix, with code pointers |
+| [protocol-analysis-completion-plan.md](protocol-analysis-completion-plan.md) | step-by-step plan + acceptance checklist to finish the thesis protocol analysis (shaping fix, HTTP GET, TLS, cellular profiles, n = 5) |
 
 ## How the pieces fit together
 
