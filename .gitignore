@@ -12,6 +12,7 @@ output/charts/
 output/runs/
 output/legacy/
 output/.active_run
+output/.pcap_reanalysis_cache.json
 output/*.csv
 output/*.bin
 data/*.bin
