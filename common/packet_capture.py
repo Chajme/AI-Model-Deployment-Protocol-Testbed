@@ -15,6 +15,16 @@ CAPTURE_SERVICES = {
 
 DEFAULT_IFACE = "eth0"
 
+# Optional BPF capture filter per protocol. The MQTT/AMQP sidecars sit in the
+# broker's network namespace, which carries two legs: server (client-a) ->
+# broker and broker -> device (client-b). Only the device leg crosses the
+# constrained link, so only it is captured; overhead is then computed for one
+# leg against one file size (the old two-leg capture reported ~115 %).
+CAPTURE_FILTERS = {
+    "mqtt": "host mqtt-client-b",
+    "amqp": "host amqp-client-b",
+}
+
 # tcpdump kernel capture buffer in KiB. The default (~1 MiB) overflows and
 # drops frames during fast large-file bursts. 32 MiB keeps even MTU-flood
 # bursts from dropping frames while tcpdump drains to disk (WSL2 veth paths
@@ -59,8 +69,12 @@ def start_capture_run(
     label: str,
     protocol: str = "mqtt",
     iface: str = DEFAULT_IFACE,
+    bpf: str | None = None,
 ) -> str:
     """Start tcpdump inside the (already-running) capture container for one run.
+
+    ``bpf`` overrides the protocol's default capture filter (CAPTURE_FILTERS);
+    pass an empty string to capture everything.
 
     The pcap is written to a fast container-local path (/tmp) and copied out
     by stop_capture_run() -- the per-run volume bind mount is too slow for the
@@ -86,11 +100,18 @@ def start_capture_run(
             "docker", "compose", "exec", "-d", service,
             "tcpdump", "-B", str(TCPDUMP_BUFFER_KB),
             "-i", iface, "-s", "0", "-w", outfile,
+            *_filter_args(protocol, bpf),
         ],
         check=True,
     )
     _wait_until_ready(service)
     return outfile
+
+
+def _filter_args(protocol: str, bpf: str | None) -> list[str]:
+    """tcpdump filter expression tokens (empty list = capture everything)."""
+    expression = CAPTURE_FILTERS.get(protocol, "") if bpf is None else bpf
+    return expression.split() if expression else []
 
 
 def _disable_offloads(protocol: str) -> None:

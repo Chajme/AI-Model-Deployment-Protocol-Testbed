@@ -1,0 +1,46 @@
+# Shaping check (Phase 1), 2026-11-23T12:16:16+01:00, profile=good (40 ms per direction), commit 77024b6 + working tree
+
+## MQTT: tc in broker netns (mqtt-capture)
+qdisc prio 1: root refcnt 13 bands 3 priomap 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+qdisc netem 30: parent 1:3 limit 1000 delay 40ms  10ms loss 0.1% seed 13882026927049910335
+qdisc tbf 31: parent 30:1 rate 10Mbit burst 8Kb lat 50ms 
+filter parent 1: protocol ip pref 1 u32 chain 0 
+filter parent 1: protocol ip pref 1 u32 chain 0 fh 800: ht divisor 1 
+filter parent 1: protocol ip pref 1 u32 chain 0 fh 800::800 order 2048 key ht 800 bkt 0 flowid 1:3 not_in_hw 
+  match ac130003/ffffffff at 16
+
+## MQTT: tc on client-a (server side, expected unshaped)
+qdisc noqueue 0: root refcnt 2 
+
+## MQTT: tc on client-b (device)
+qdisc netem 1: root refcnt 13 limit 1000 delay 40ms  10ms loss 0.1%
+qdisc tbf 10: parent 1:1 rate 10Mbit burst 8Kb lat 50ms 
+
+## MQTT RTT broker -> client-b (device link, expect ~80 ms)
+20 packets transmitted, 20 received, 0% packet loss, time 3814ms
+rtt min/avg/max/mdev = 61.589/75.749/90.657/7.494 ms
+
+## MQTT RTT broker -> client-a (backend link, expect < 2 ms)
+20 packets transmitted, 20 received, 0% packet loss, time 3877ms
+rtt min/avg/max/mdev = 0.057/0.071/0.182/0.026 ms
+
+## AMQP: tc in broker netns (amqp-capture)
+qdisc prio 1: root refcnt 13 bands 3 priomap 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+qdisc netem 30: parent 1:3 limit 1000 delay 40ms  10ms loss 0.1% seed 2930779717203430764
+qdisc tbf 31: parent 30:1 rate 10Mbit burst 8Kb lat 50ms 
+filter parent 1: protocol ip pref 1 u32 chain 0 
+filter parent 1: protocol ip pref 1 u32 chain 0 fh 800: ht divisor 1 
+filter parent 1: protocol ip pref 1 u32 chain 0 fh 800::800 order 2048 key ht 800 bkt 0 flowid 1:3 not_in_hw 
+  match ac130003/ffffffff at 16
+
+## AMQP RTT broker -> amqp-client-b (expect ~80 ms)
+20 packets transmitted, 20 received, 0% packet loss, time 3812ms
+rtt min/avg/max/mdev = 67.716/79.629/99.626/9.055 ms
+
+## AMQP RTT broker -> amqp-client-a (expect < 2 ms)
+20 packets transmitted, 20 received, 0% packet loss, time 3879ms
+rtt min/avg/max/mdev = 0.045/0.079/0.350/0.062 ms
+
+## HTTP (direct protocol): RTT server -> client (both ends shaped, expect ~80 ms)
+20 packets transmitted, 20 received, 0% packet loss, time 3813ms
+rtt min/avg/max/mdev = 65.592/83.216/161.406/19.516 ms

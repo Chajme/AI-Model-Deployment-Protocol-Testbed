@@ -10,6 +10,7 @@ __pycache__/
 output/pcap/
 output/charts/
 output/runs/
+output/runs-legacy-v1/
 output/legacy/
 output/.active_run
 output/.pcap_reanalysis_cache.json

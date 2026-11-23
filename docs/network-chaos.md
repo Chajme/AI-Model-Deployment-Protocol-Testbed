@@ -82,40 +82,58 @@ protocol, then iterates `itertools.product(protocols, profiles)`.
 
 ## 2. `scripts/network_chaos.sh` — the tc applicator
 
-The entry point of every automated-stack app service (the stock broker images
-and netshoot captures don't run it):
+The entry point of every automated-stack app service, and of the MQTT/AMQP
+capture sidecars:
 
 ```sh
-PROFILE=${NETWORK_PROFILE:-iot}
-tc qdisc del dev eth0 root 2>/dev/null || true     # clean slate on restarts
+PROFILE=${NETWORK_PROFILE:-iot}   # good|iot|harsh|mobile|satellite|ltem|nbiot|none
+IFACE=${SHAPE_IFACE:-eth0}
+tc qdisc del dev "$IFACE" root 2>/dev/null || true   # clean slate on restarts
 
-case "$PROFILE" in good|iot|harsh|mobile|satellite) apply_$PROFILE ;;
-esac
-
-if [ -z "$APP_COMMAND" ]; then
-    echo "applying tc only and staying idle."
-    exec sleep infinity            # clients: wait for the harness to exec transfers
+set_profile "$PROFILE"            # sets $NETEM and $TBF for that profile
+if   [ "$PROFILE" = none ];  then :          # no shaping
+elif [ -n "$SHAPE_DST" ];    then apply_dst  # shape only traffic to $SHAPE_DST
+else                              apply_root # shape all egress of $IFACE
 fi
-exec sh -c "$APP_COMMAND"          # servers/receiver: apply tc, then run the app
+
+[ -z "$APP_COMMAND" ] && exec sleep infinity  # clients/sidecars: stay idle
+exec sh -c "$APP_COMMAND"                     # servers/receivers: run the app
 ```
 
 Two layers of qdisc are added per profile:
 
-1. **`netem`** (root) — delay, loss, duplicate, reorder (jitter distribution %).
-2. **`tbf`** (child) — token-bucket rate cap (`rate`, `burst`, `latency`).
+1. **`netem`** — delay, loss, duplicate, reorder (jitter distribution %).
+2. **`tbf`** (child of netem) — token-bucket rate cap (`rate`, `burst`, `latency`).
 
-The **same profile is applied on the `eth0` of every client and of the
-http/coap/grpc/lwm2m servers** (plus the capture sidecar, which shares the
-server namespace). This models an end-to-end link, not a one-directional
-impairment — for those protocols.
+`apply_dst` puts a `prio` qdisc at the root whose default traffic goes to an
+unshaped band (`1:2`), hangs the netem + tbf pair under band `1:3`, and adds a
+`u32` filter that sends only packets addressed to `$SHAPE_DST`'s IP to `1:3`.
 
-**Brokers are not shaped.** `mosquitto-broker` and `rabbitmq-broker` are stock
-images whose entry points the harness does not control, so no `tc` is applied
-on their side. Broker protocols (MQTT/AMQP) therefore face **one** constrained
-link (the client uplink; the broker's delivery leg and PUBACK/confirm path are
-clean), while the direct protocols (HTTP/CoAP/gRPC/LwM2M) face shaping on
-**both** ends, which also degrades their ACK/response path. Keep this
-asymmetry in mind when comparing protocols under the same profile.
+### Shaping model: a bidirectional access link
+
+There is exactly **one constrained link**: between the edge device (the side
+that receives the model) and the endpoint it gets the data from. It is
+constrained **in both directions**; every other link (backend, server/CI side)
+is clean. `tc` shapes egress only, so both endpoints of that link shape their
+own egress with the same profile. Profile values are therefore **per
+direction**, and the round-trip time is about **2 × delay**.
+
+| Protocol | Data path | Shaped |
+|---|---|---|
+| HTTP, HTTP GET, CoAP, gRPC, LwM2M | client ↔ server (one link, own network per protocol) | client egress and server egress |
+| MQTT, AMQP | publisher `client-a` (server side) → broker → device `client-b` | `client-b` egress, and broker egress **towards `client-b` only** (applied by the capture sidecar in the broker's namespace, `SHAPE_DST`). `client-a` runs `NETWORK_PROFILE=none`. |
+
+Assumptions to state when reporting results:
+
+- the same profile values apply in both directions (no uplink/downlink
+  asymmetry);
+- for upload-style transfers (HTTP PUT, CoAP PUT, gRPC streaming) the shaping
+  is symmetric, so the result does not depend on which end plays the device.
+
+The MQTT/AMQP sidecars also capture only the device leg (`host <client-b>`
+BPF filter), so wire overhead is reported for one leg. Runs made before this
+model (tag `analysis-v1-legacy`) live in `output/runs-legacy-v1/`; see
+ISSUES.md FIXED-15.
 
 ### Profile parameters (exact tc values)
 
@@ -135,7 +153,7 @@ Notes on the syntax:
 - `loss gemodel p r h k` — Gilbert–Elliott model (probabilities as %).
 - `reorder P% 50%` — reorders P% of packets (50% correlation).
 
-Unknown profiles exit 1.
+Unknown profiles exit 1. `none` applies no shaping (used by the MQTT/AMQP publishers).
 
 ---
 

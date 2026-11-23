@@ -12,8 +12,10 @@ services:
     volumes:
       - ./protocols/MQTT/mosquitto-broker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
 
-  # Sender -- tc applied at startup, then stays idle so the test harness can
-  # drive one transfer at a time (per file / QoS) with per-run pcap capture.
+  # Sender = the server/CI side publishing the model. It sits in a good
+  # network, so it is NOT shaped (NETWORK_PROFILE=none); only the broker <->
+  # device (client-b) link is constrained. It stays idle so the test harness
+  # can drive one transfer at a time (per file / QoS) with per-run pcap capture.
   mqtt-client-a:
     profiles: ["mqtt"]
     build: ./
@@ -29,9 +31,10 @@ services:
     networks:
       - mqtt-net
     environment:
-      - NETWORK_PROFILE=${NETWORK_PROFILE}
+      - NETWORK_PROFILE=none
+      - TLS=${TLS:-0}
 
-  # Receiver -- stays up and waits for published chunks from client A.
+  # Receiver = the edge device. Shapes its own egress (device -> broker).
   mqtt-client-b:
     profiles: ["mqtt"]
     build: ./
@@ -48,17 +51,27 @@ services:
     environment:
       - APP_COMMAND=python -m protocols.MQTT.clients.client_b
       - NETWORK_PROFILE=${NETWORK_PROFILE}
+      - TLS=${TLS:-0}
 
+  # Shares the broker's network namespace. It captures the pcaps AND shapes
+  # the broker's egress towards client-b only (SHAPE_DST), i.e. the broker ->
+  # device direction of the constrained link -- don't remove it.
   mqtt-capture:
     profiles: ["mqtt"]
     image: nicolaka/netshoot:v0.16
     depends_on:
       - mosquitto-broker
+      - mqtt-client-b
     network_mode: "service:mosquitto-broker"
     cap_add:
       - NET_ADMIN
       - NET_RAW
-    entrypoint: [ "sleep", "infinity" ]
+    volumes:
+      - ./scripts:/app/scripts:ro
+    entrypoint: [ "sh", "/app/scripts/network_chaos.sh" ]
+    environment:
+      - NETWORK_PROFILE=${NETWORK_PROFILE}
+      - SHAPE_DST=mqtt-client-b
 
   # ========================
   # HTTP
@@ -164,7 +177,7 @@ services:
     networks:
       - amqp-net
 
-  # Sender -- tc applied at startup, then stays idle (see mqtt-client-a).
+  # Sender = server/CI side in a good network: not shaped (see mqtt-client-a).
   amqp-client-a:
     profiles: ["amqp"]
     build: ./
@@ -180,7 +193,7 @@ services:
     networks:
       - amqp-net
     environment:
-      - NETWORK_PROFILE=${NETWORK_PROFILE}
+      - NETWORK_PROFILE=none
 
   # Receiver -- stays up and waits for published chunks from client A.
   amqp-client-b:
@@ -200,16 +213,23 @@ services:
       - APP_COMMAND=python -m protocols.AMQP.receiver.amqp_receiver
       - NETWORK_PROFILE=${NETWORK_PROFILE}
 
+  # Captures AND shapes broker -> amqp-client-b (see mqtt-capture) -- don't remove.
   amqp-capture:
     profiles: ["amqp"]
     image: nicolaka/netshoot:v0.16
     depends_on:
       - rabbitmq-broker
+      - amqp-client-b
     network_mode: "service:rabbitmq-broker"
     cap_add:
       - NET_ADMIN
       - NET_RAW
-    entrypoint: [ "sleep", "infinity" ]
+    volumes:
+      - ./scripts:/app/scripts:ro
+    entrypoint: [ "sh", "/app/scripts/network_chaos.sh" ]
+    environment:
+      - NETWORK_PROFILE=${NETWORK_PROFILE}
+      - SHAPE_DST=amqp-client-b
 
   # ========================
   # gRPC
