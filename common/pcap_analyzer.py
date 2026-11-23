@@ -26,6 +26,14 @@ PROTOCOL_CONFIG = {
         "type_fields": ["http.request.method", "http.response.code"],
         "is_tcp": True,
     },
+    # Device download: the response body travels as plain TCP data segments
+    # from the server port, so the window uses the same rule as the PUT.
+    "http-get": {
+        "filter": "http",
+        "duration_filter": "http or (tcp.len > 0 and tcp.port == 8000)",
+        "type_fields": ["http.request.method", "http.response.code"],
+        "is_tcp": True,
+    },
     "coap": {
         "filter": "coap",
         "type_fields": ["coap.code"],

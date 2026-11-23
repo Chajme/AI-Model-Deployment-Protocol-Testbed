@@ -7,6 +7,7 @@ import time
 CAPTURE_SERVICES = {
     "mqtt": "mqtt-capture",
     "http": "http-capture",
+    "http-get": "http-capture",
     "coap": "coap-capture",
     "amqp": "amqp-capture",
     "grpc": "grpc-capture",
@@ -47,6 +48,7 @@ CAPTURE_SETTLE_SECONDS = 2.0
 OFFLOAD_CONTAINERS = {
     "mqtt": ["mqtt-client-a", "mqtt-client-b"],
     "http": ["http-client"],
+    "http-get": ["http-client"],
     "coap": [],
     "amqp": ["amqp-client-a", "amqp-client-b"],
     "grpc": ["grpc-client"],

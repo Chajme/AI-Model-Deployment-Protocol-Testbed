@@ -97,7 +97,7 @@ protocols/                     per-protocol containers and the orchestration ent
   MQTT/clients/client_b.py     receiver (reassembles chunks, verifies checksum)
   MQTT/mosquitto-broker/       broker config
   HTTP/client/http_client.py   streaming PUT client (TCP RTT, TTFB, server-side checksum)
-  HTTP/server/flask_server.py  Flask upload server (+ legacy nginx.conf WebDAV variant)
+  HTTP/server/flask_server.py  HTTP PUT/GET server on gunicorn (+ legacy nginx.conf WebDAV variant)
   CoAP/client/coap_client.py   blockwise PUT client (aiocoap)
   CoAP/server/coap_server.py   blockwise upload resource
   AMQP/client/amqp_client.py   sender (1 MB chunks to RabbitMQ queues, publisher confirms)

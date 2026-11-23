@@ -39,6 +39,7 @@ os.environ.setdefault("OUTPUT_DIR", "./output")
 #   service:   docker compose service (client) to exec into
 #   module:    python module with a --file argument to run inside the container
 #   has_qos:   whether the protocol has QoS levels to sweep (MQTT)
+#   args:      extra arguments passed to the module (optional)
 RUNNERS = {
     "mqtt": {
         "service": "mqtt-client-a",
@@ -49,6 +50,13 @@ RUNNERS = {
         "service": "http-client",
         "module": "protocols.HTTP.client.http_client",
         "has_qos": False,
+    },
+    # Device-style download of the payload (GET with Range resume).
+    "http-get": {
+        "service": "http-client",
+        "module": "protocols.HTTP.client.http_client",
+        "has_qos": False,
+        "args": ["--mode", "get"],
     },
     "coap": {
         "service": "coap-client",
@@ -101,6 +109,7 @@ def run_transfer(protocol: str, filename: str, qos: int | None = None, analyze: 
             "docker", "compose", "exec", runner["service"],
             "python", "-m", runner["module"],
             "--file", filename,
+            *runner.get("args", []),
         ]
         if qos is not None:
             command += ["--qos", str(qos)]

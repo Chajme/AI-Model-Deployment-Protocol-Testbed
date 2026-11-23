@@ -1,0 +1,19 @@
+# HTTP GET checks (Phase 3), 2026-11-23T12:27:11+01:00, profile=iot
+
+## Range request: curl -r 0-99 (expect '206 100')
+206 100
+
+## Resume test: 1 MB download, http-server restarted ~6 s in
+restarting server at 12:27:22
+Downloading binary_file_1mb.bin (1.00 MB) from http://http-server:8000/download/binary_file_1mb.bin ...
+Network Latency (TCP connect): 0.90494s
+  -> interrupted at 704512/1048576 B (attempt 1/30): ConnectionError
+  -> resumed at 704512 B (206)
+  -> Success! Download took 143.635s (resumed 1x, 344064 B after resume).
+  -> Integrity OK: True
+Writing to /app/output/http-get_measurements.csv
+All transfers complete. Keeping container alive for 3s...
+
+Note: after the restart the old TCP connection went silent rather than being reset,
+so the interruption was detected by the 120 s read timeout (HTTP_READ_TIMEOUT_S);
+that timeout makes up most of the 143.6 s. The resume itself is the 206 line above.

@@ -64,51 +64,65 @@ by default (`--side auto`).
 
 ---
 
-## HTTP — streaming PUT with server-side checksum
+## HTTP — streaming PUT upload (`http`) and device download (`http-get`)
+
+Both protocol keys use the same client module and server; `http-get` passes
+`--mode get` (see `RUNNERS` in `protocols/benchmark_manager.py`). With
+`TLS=1` both switch to HTTPS on port 8443 (see the TLS section below).
 
 ### Client: `protocols/HTTP/client/http_client.py`
 
-- Server: `http://http-server:8000` (Flask).
-- **Latency (TCP RTT)** — `measure_network_latency()` opens a bare TCP socket
-  to `http-server:8000`, times the connect, closes. No HTTP, no server
-  processing — a clean RTT.
-- **TTFB** — a `requests` response hook (`record_ttfb`) fires as soon as the
-  response headers arrive and records `elapsed from request_start`.
-- **Transfer** (`transfer_file`):
+- Server: `http://http-server:8000` (`https://http-server:8443` with `TLS=1`).
+- **Latency (TCP connect)** — `measure_network_latency()` opens a bare TCP
+  socket to the server, times the connect, closes. No HTTP, no server
+  processing. With TLS it also times the handshake on that socket and returns
+  it separately (`tls_handshake_s`).
+- **PUT upload** (`transfer_file`, key `http`):
   1. Streams the file with `requests.put(BASE_URL + "/upload/" + filename,
-     data=file_stream, headers={"X-Checksum": checksum}, hooks=...)`.
-     The file is streamed from disk (`open(..., "rb")` as the body), so memory
+     data=file_stream, headers={"X-Checksum": checksum}, hooks=...)`; memory
      stays flat regardless of file size.
   2. `integrity_ok = (put_response.status_code == 200)` — the *server* decided
-     checksum equality.
-  3. `ResourceMonitor(sample_interval=0.01)` wraps the transfer for CPU/RAM/energy.
-  4. Writes an HTTP row.
-- CLI: `--file <name>`; sleeps 5 s on startup.
+     checksum equality. TTFB comes from a `requests` response hook.
+  3. A failed upload still writes a row (`integrity_ok=False`) so success
+     rates are honest.
+- **GET download** (`download_file`, key `http-get`):
+  1. `GET /download/<file>` with `stream=True`, read in 16 KiB chunks, SHA-256
+     updated per chunk and compared with the source payload (the client
+     container mounts the same `data/`).
+  2. TTFB = time from request start to response headers.
+  3. On `ConnectionError` / `ChunkedEncodingError` / timeout the client
+     retries with `Range: bytes=<received>-` and requires `206`
+     (`HTTP_MAX_RETRY_ATTEMPTS`, default 30, 1 s apart; a refused connect
+     while the server restarts counts as a retry, not a resume). A stalled read
+     is treated as broken after `HTTP_READ_TIMEOUT_S` (default 120 s).
+  4. Writes an `http-get` row with `resumed` (number of 206 continuations) and
+     `bytes_resumed` (bytes received after a resume).
+- CLI: `--file <name> --mode put|get`; sleeps 5 s on startup.
 
 ### Server: `protocols/HTTP/server/flask_server.py`
 
-```python
-@app.route("/upload/<filename>", methods=["PUT"])
-def upload(filename):
-    actual = sha256(request.data)          # whole-body checksum
-    if expected != actual: return 400
-    save_file(filename, data=request.data)
-    return 200
-```
-
-- `request.data` buffers the full body in memory on the server (the client
-  streams, but the Flask dev server reads it whole — noted as a server-side RAM
-  cost for very large files).
+- Served by **gunicorn** (`gthread`, 2 workers × 4 threads, `--timeout 3600`),
+  not the Flask development server, for both the plain and the TLS variant,
+  so the two differ only in TLS. `python -m protocols.HTTP.server.flask_server`
+  execs gunicorn with the right bind/cert arguments.
+- `PUT /upload/<file>` reads `request.stream` in 64 KiB chunks, hashing as the
+  body arrives (no whole-body buffering), and returns 400 on a checksum
+  mismatch.
+- `GET /download/<file>` serves `data/<file>` with
+  `send_from_directory(..., conditional=True)`: Werkzeug answers `Range`
+  requests with `206 Partial Content`, which makes resume possible.
 - A legacy `protocols/HTTP/server/nginx.conf` (WebDAV PUT variant) exists but is
   **not** wired into the current compose files.
 
 ### Latency vs. goodput semantics
 
-- `latency_tcp_rtt` — connection-setup RTT (transport only).
-- `latency_ttfb` — time to first response byte (headers), includes server
-  processing of the uploaded body.
+- `latency_tcp_rtt` — TCP connect time (transport only).
+- `tls_handshake_s` — TLS handshake on top of that connection (TLS runs only).
+- `latency_ttfb` — time to first response byte (headers). For the PUT it
+  includes server processing of the uploaded body; for the GET it is the
+  request → first byte of the download.
 - `goodput_mbps` — `file_size × 8 / transfer_time` where transfer_time spans
-  request-start to response-end.
+  request-start to the last byte (GET) or response-end (PUT).
 
 ---
 

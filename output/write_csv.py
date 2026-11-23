@@ -112,6 +112,28 @@ def write_to_file_http(data: list[dict]):
     ]
     write_to_csv(output_path, fieldnames, data)
 
+def write_to_file_http_get(data: list[dict]):
+    """Device-style HTTP download (protocol key http-get)."""
+    output_path = _measurement_file("http-get")
+    fieldnames = [
+        'protocol',
+        'direction',
+        'tls',
+        'file_size',
+        'time_to_transfer',
+        'latency_tcp_rtt',
+        'tls_handshake_s',
+        'latency_ttfb',
+        'goodput_mbps',
+        'resumed',
+        'bytes_resumed',
+        'integrity_ok',
+        'avg_cpu_usage',
+        'peak_ram_usage',
+        'sample_count',
+    ]
+    write_to_csv(output_path, fieldnames, data)
+
 def write_to_file_mqtt(data: list[dict]):
     output_path = _measurement_file("mqtt")
     fieldnames = [

@@ -77,7 +77,7 @@ services:
   # HTTP
   # ========================
   http-server:
-    profiles: ["http"]
+    profiles: ["http", "http-get"]
     build: .
     cap_add:
       - NET_ADMIN                          # needed for tc on server too
@@ -91,10 +91,11 @@ services:
     environment:
       - APP_COMMAND=python -m protocols.HTTP.server.flask_server
       - NETWORK_PROFILE=${NETWORK_PROFILE}
+      - TLS=${TLS:-0}
 
   # Client -- tc applied at startup, then stays idle (see mqtt-client-a).
   http-client:
-    profiles: ["http"]
+    profiles: ["http", "http-get"]
     build: .
     cap_add:
       - NET_ADMIN
@@ -109,9 +110,10 @@ services:
       - http-net
     environment:
       - NETWORK_PROFILE=${NETWORK_PROFILE}
+      - TLS=${TLS:-0}
 
   http-capture:
-    profiles: ["http"]
+    profiles: ["http", "http-get"]
     image: nicolaka/netshoot:v0.16
     depends_on:
       - http-server
