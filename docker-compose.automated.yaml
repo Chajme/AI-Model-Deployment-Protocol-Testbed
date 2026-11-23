@@ -5,7 +5,7 @@ services:
 #  # ========================
   mosquitto-broker:
     profiles: ["mqtt"]
-    image: eclipse-mosquitto:latest
+    image: eclipse-mosquitto:2.1.2-alpine
     # No host port binding -- benchmark runs inside the internal mqtt-net.
     networks:
       - mqtt-net
@@ -51,7 +51,7 @@ services:
 
   mqtt-capture:
     profiles: ["mqtt"]
-    image: nicolaka/netshoot
+    image: nicolaka/netshoot:v0.16
     depends_on:
       - mosquitto-broker
     network_mode: "service:mosquitto-broker"
@@ -99,7 +99,7 @@ services:
 
   http-capture:
     profiles: ["http"]
-    image: nicolaka/netshoot
+    image: nicolaka/netshoot:v0.16
     depends_on:
       - http-server
     network_mode: "service:http-server"
@@ -146,7 +146,7 @@ services:
 
   coap-capture:
     profiles: ["coap"]
-    image: nicolaka/netshoot
+    image: nicolaka/netshoot:v0.16
     depends_on:
       - coap-server
     network_mode: "service:coap-server"
@@ -160,7 +160,7 @@ services:
   # ========================
   rabbitmq-broker:
     profiles: ["amqp"]
-    image: rabbitmq:3-alpine
+    image: rabbitmq:3.13.7-alpine
     networks:
       - amqp-net
 
@@ -202,7 +202,7 @@ services:
 
   amqp-capture:
     profiles: ["amqp"]
-    image: nicolaka/netshoot
+    image: nicolaka/netshoot:v0.16
     depends_on:
       - rabbitmq-broker
     network_mode: "service:rabbitmq-broker"
@@ -249,7 +249,7 @@ services:
 
   grpc-capture:
     profiles: ["grpc"]
-    image: nicolaka/netshoot
+    image: nicolaka/netshoot:v0.16
     depends_on:
       - grpc-server
     network_mode: "service:grpc-server"
@@ -296,7 +296,7 @@ services:
 
   lwm2m-capture:
     profiles: ["lwm2m"]
-    image: nicolaka/netshoot
+    image: nicolaka/netshoot:v0.16
     depends_on:
       - lwm2m-server
     network_mode: "service:lwm2m-server"

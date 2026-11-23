@@ -4,7 +4,7 @@ services:
 #  # MQTT
 #  # ========================
   mosquitto-broker:
-    image: eclipse-mosquitto:latest
+    image: eclipse-mosquitto:2.1.2-alpine
     # No host port binding: the benchmark runs inside the internal mqtt-net,
     # so publishing 1883 to the host only causes conflicts with other stacks.
     networks:
@@ -41,7 +41,7 @@ services:
       - mqtt-net
 
   mqtt-capture:
-    image: nicolaka/netshoot   # small image with tcpdump preinstalled
+    image: nicolaka/netshoot:v0.16   # small image with tcpdump preinstalled
     depends_on:
       - mosquitto-broker
     network_mode: "service:mosquitto-broker"
@@ -87,7 +87,7 @@ services:
       - http-net
 
   http-capture:
-    image: nicolaka/netshoot
+    image: nicolaka/netshoot:v0.16
     depends_on:
       - http-server
     network_mode: "service:http-server"
@@ -126,7 +126,7 @@ services:
       - coap-net
 
   coap-capture:
-    image: nicolaka/netshoot
+    image: nicolaka/netshoot:v0.16
     depends_on:
       - coap-server
     network_mode: "service:coap-server"
@@ -139,7 +139,7 @@ services:
   # AMQP
   # ========================
   rabbitmq-broker:
-    image: rabbitmq:3-alpine
+    image: rabbitmq:3.13.7-alpine
     networks:
       - amqp-net
 
@@ -173,7 +173,7 @@ services:
       - amqp-net
 
   amqp-capture:
-    image: nicolaka/netshoot   # small image with tcpdump preinstalled
+    image: nicolaka/netshoot:v0.16   # small image with tcpdump preinstalled
     depends_on:
       - rabbitmq-broker
     network_mode: "service:rabbitmq-broker"
@@ -212,7 +212,7 @@ services:
       - grpc-net
 
   grpc-capture:
-    image: nicolaka/netshoot
+    image: nicolaka/netshoot:v0.16
     depends_on:
       - grpc-server
     network_mode: "service:grpc-server"
@@ -251,7 +251,7 @@ services:
       - lwm2m-net
 
   lwm2m-capture:
-    image: nicolaka/netshoot
+    image: nicolaka/netshoot:v0.16
     depends_on:
       - lwm2m-server
     network_mode: "service:lwm2m-server"

@@ -63,7 +63,7 @@ RETRANSMISSION_FILTER = (
 # analysis can run inside a throwaway container when no host tshark is
 # installed (the common case on Windows). Override with TSHARK_CONTAINER_IMAGE
 # if a different image/tag is preferred.
-TSHARK_CONTAINER_IMAGE = os.getenv("TSHARK_CONTAINER_IMAGE", "nicolaka/netshoot")
+TSHARK_CONTAINER_IMAGE = os.getenv("TSHARK_CONTAINER_IMAGE", "nicolaka/netshoot:v0.16")
 
 _HOST_TSHARK_CANDIDATES = [
     r"C:\Program Files\Wireshark\tshark.exe",

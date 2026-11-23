@@ -14,6 +14,7 @@
 
 import argparse
 import itertools
+import json
 import os
 import subprocess
 import sys
@@ -69,6 +70,58 @@ def wait_for_service(env, protocol, timeout=60):
     raise RuntimeError(f"{protocol} service {host}:{port} never became reachable")
 
 
+def _capture(argv, env=None, timeout=60):
+    """stdout of a command, or None if it fails (provenance is best-effort)."""
+    try:
+        out = subprocess.run(argv, env=env, capture_output=True, text=True,
+                             timeout=timeout, check=True)
+        return out.stdout
+    except Exception:
+        return None
+
+
+def collect_provenance(env, protocol):
+    """What exactly produced this run: code revision, image digests, packages.
+
+    Called once the stack is up, so the pip freeze comes from the client
+    container that performs the transfers (not from the host venv).
+    """
+    meta = {}
+
+    commit = _capture(["git", "rev-parse", "HEAD"])
+    if commit:
+        meta["git_commit"] = commit.strip()
+        dirty = _capture(["git", "status", "--porcelain", "--untracked-files=no"])
+        meta["git_dirty"] = bool(dirty and dirty.strip())
+
+    images = {}
+    listing = _capture(["docker", "compose", "--profile", protocol, "images",
+                        "--format", "json"], env=env)
+    if listing:
+        try:
+            rows = json.loads(listing)
+        except json.JSONDecodeError:
+            rows = [json.loads(line) for line in listing.splitlines() if line.strip()]
+        for row in rows:
+            ref = f"{row.get('Repository')}:{row.get('Tag')}"
+            if ref in images:
+                continue
+            digests = _capture(["docker", "image", "inspect", "--format",
+                                "{{json .RepoDigests}}", row.get("ID", ref)])
+            images[ref] = {
+                "id": row.get("ID"),
+                "repo_digests": json.loads(digests) if digests else [],
+            }
+    meta["images"] = images
+
+    service = RUNNERS[protocol]["service"]
+    freeze = _capture(["docker", "compose", "exec", "-T", service, "pip", "freeze"], env=env)
+    if freeze:
+        meta["pip_freeze"] = sorted(line for line in freeze.splitlines() if line.strip())
+
+    return meta
+
+
 def run_experiment(protocol, profile, run_id=None):
     print(f"\n=== Running {protocol.upper()} | {profile} ===")
 
@@ -112,6 +165,8 @@ def run_experiment(protocol, profile, run_id=None):
         )
 
         wait_for_service(env, protocol)
+
+        runs.update_manifest(output_dir, rid, collect_provenance(env, protocol))
 
         run_protocol(protocol)
 

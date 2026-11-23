@@ -7,6 +7,12 @@ entries (`output/runs/20260825T183032_mqtt/`) predates the run-directory
 history of the current checkout and is no longer present; later evidence
 references runs that do exist.
 
+> **Legacy boundary (tag `analysis-v1-legacy`).** Every run produced up to that
+> tag used the legacy shaping, in which the MQTT/AMQP device link
+> (broker → `client-b`) was not shaped (see OPEN-5). Those runs live in
+> `output/runs-legacy-v1/` and must never be mixed with v2 runs in one table.
+> The v2 changes are tracked in `docs/protocol-analysis-completion-plan.md`.
+
 ---
 
 ## OPEN-4: LwM2M large-file sweeps are RTT-bound and extremely slow
