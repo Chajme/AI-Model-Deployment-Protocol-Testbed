@@ -1,4 +1,4 @@
-﻿# Metrics & CSV schemas
+# Metrics & CSV schemas
 
 All measurement files are appended CSVs with a header written on first write.
 
@@ -10,18 +10,21 @@ Every experiment writes to its own immutable **run directory**:
 output/runs/<run_id>/
   run.json                        # manifest (see below)
   pcap_measurements.csv           # host harness (tshark)
-  http_measurements.csv           # HTTP client
+  http_measurements.csv           # HTTP PUT client (protocol key http)
+  http-get_measurements.csv       # HTTP GET download client (protocol key http-get)
   mqtt_measurements.csv           # MQTT sender AND receiver (side column)
   coap_measurements.csv           # CoAP client
   amqp_measurements.csv           # AMQP sender AND receiver (side column)
   grpc_measurements.csv           # gRPC sender AND receiver (side column)
   lwm2m_measurements.csv          # LwM2M client (side=client)
+  transfer_failures.csv           # harness: attempts whose client process failed (if any)
   pcap/                           # one pcap per transfer
   charts/                         # generated on demand by common/charts.py --run
 ```
 
 `<run_id>` is timestamp-based, e.g. `20260818T201455_mqtt_harsh`
-(`<UTC-time>_<protocol>_<profile>`), overridable via `--run-id` (runner.py) or
+(`<UTC-time>_<protocol>_<profile>`, plus `_tls` for a TLS run and `_r<i>` for
+repetition *i* of a sweep), overridable via `--run-id` (runner.py) or
 `RUN_ID`. The active run is shared between host and containers: `RUN_ID` env var
 on the host, and an `.active_run` marker file inside `output/` (read through the
 bind mount). Runs are **immutable** — a second write to the same id raises.
@@ -56,6 +59,15 @@ Written by `common/runs.new_run()`, extended by `benchmark_manager.run_protocol(
 | `file_sizes`, `files` | bytes + names of the payloads actually transferred |
 | `qos_levels` | MQTT QoS levels swept (MQTT runs only) |
 | `flow` | `manual` for `benchmark_manager.py` CLI, absent for `runner.py` |
+| `tls` | `true` for a `runner.py --tls` run |
+| `shaping_model` | `access-link-bidir-v2` for runs made with the fixed shaping (ISSUES.md FIXED-15) |
+| `git_commit`, `git_dirty` | code revision of the harness and whether tracked files had local changes |
+| `images` | `{image: {id, repo_digests}}` of the containers of this stack |
+| `pip_freeze` | `pip freeze` of the client container that ran the transfers |
+| `sweep_id`, `repeat_index`, `seed` | sweep label, repetition number and order seed (`runner.py --repeat/--sweep-id`) |
+
+`protocol` can also be `http-get` (device download) or `mqtt-windowed` (MQTT
+with 20 chunks in flight; writes the `mqtt` CSV schema).
 
 ---
 
@@ -95,8 +107,27 @@ Written by `common/runs.new_run()`, extended by `benchmark_manager.run_protocol(
 | `integrity_ok` | bool | HTTP 200 (server verified checksum) |
 | `avg_cpu_usage` | str | e.g. `"12.34%"` |
 | `peak_ram_usage` | str | e.g. `"28.15 MB"` |
-| `energy_est` | str | e.g. `"0.0041"` (joules) |
 | `sample_count` | int | CPU/RAM samples behind the averages |
+
+---
+
+## 2b. `output/http-get_measurements*.csv` — HTTP GET download client
+
+| Column | Type | Meaning |
+|---|---|---|
+| `protocol` | str | `http-get` |
+| `direction` | str | `download` |
+| `tls` | bool | HTTPS run (`TLS=1`) |
+| `file_size` | float | MB |
+| `time_to_transfer` | float / `X` | s, request-start → last byte (includes resume time); `X` on failure |
+| `latency_tcp_rtt` | float | s, bare TCP connect to the server |
+| `tls_handshake_s` | float / `X` | s, TLS handshake after the TCP connect (TLS runs only) |
+| `latency_ttfb` | float | s, request-start → response headers |
+| `goodput_mbps` | float / `X` | `file_size_bytes × 8 / (time_to_transfer × 1e6)` |
+| `resumed` | int | number of Range (206) continuations |
+| `bytes_resumed` | int | bytes received after a resume |
+| `integrity_ok` | bool | SHA-256 of the received bytes equals the source payload |
+| `avg_cpu_usage`, `peak_ram_usage`, `sample_count` | str / int | as for HTTP |
 
 ---
 
@@ -107,6 +138,8 @@ Written by `common/runs.new_run()`, extended by `benchmark_manager.run_protocol(
 | `protocol` | str | `mqtt` |
 | `qos` | int | 1 or 2 |
 | `side` | str | `sender` (client_a) or `receiver` (client_b) |
+| `tls` | bool | MQTT over TLS run (`TLS=1`) |
+| `tls_handshake_s` | float / `X` | sender: publisher's TLS handshake (server side); receiver: the device's handshake over the constrained link, measured once per connection |
 | `file_size` | float | MB |
 | `sender_duration` | float / `X` | chunk-transmission window only (the metadata publish+ACK happens before the timer starts; `X` in receiver rows) |
 | `receiver_duration` | float / `X` | receiver wall-clock; `X` in sender rows and in single-chunk receiver rows |
@@ -115,7 +148,6 @@ Written by `common/runs.new_run()`, extended by `benchmark_manager.run_protocol(
 | `integrity_ok` | bool / empty | receiver verifies SHA-256; empty in sender rows |
 | `avg_cpu_usage` | str | `"12.34%"` |
 | `peak_ram_usage` | str | `"28.15 MB"` |
-| `energy_est` | str | joules |
 | `sample_count` | int | CPU/RAM samples behind the averages |
 
 One transfer → **two rows** (sender + receiver), each with its own duration and
@@ -144,7 +176,6 @@ still recorded.
 | `integrity_ok` | bool | response code is successful (2.04 Changed) |
 | `avg_cpu_usage` | str | `"12.34%"` |
 | `peak_ram_usage` | str | `"28.15 MB"` |
-| `energy_est` | str | joules |
 | `sample_count` | int | CPU/RAM samples behind the averages |
 
 ---
@@ -163,7 +194,6 @@ still recorded.
 | `integrity_ok` | bool / empty | receiver verifies SHA-256; empty in sender rows |
 | `avg_cpu_usage` | str | `"12.34%"` |
 | `peak_ram_usage` | str | `"28.15 MB"` |
-| `energy_est` | str | joules |
 | `sample_count` | int | CPU/RAM samples behind the averages |
 
 One transfer → **two rows** (sender + receiver). The sender's timed window
@@ -187,7 +217,6 @@ in `latency`); single-chunk transfers record `receiver_duration="X"` and
 | `integrity_ok` | bool / empty | server verifies SHA-256 and renames `.part` → final on match |
 | `avg_cpu_usage` | str | `"12.34%"` |
 | `peak_ram_usage` | str | `"28.15 MB"` |
-| `energy_est` | str | joules |
 | `sample_count` | int | CPU/RAM samples behind the averages |
 
 One transfer → **two rows** (sender + receiver).
@@ -207,29 +236,24 @@ One transfer → **two rows** (sender + receiver).
 | `integrity_ok` | bool | client verifies the SHA-256 of the pulled object |
 | `avg_cpu_usage` | str | `"12.34%"` |
 | `peak_ram_usage` | str | `"28.15 MB"` |
-| `energy_est` | str | joules |
 | `sample_count` | int | CPU/RAM samples behind the averages |
 
 ---
 
-## 8. CPU / RAM / energy — `common/resource_monitor.py`
+## 8. CPU / RAM — `common/resource_monitor.py`
 
 `ResourceMonitor` samples the **client process** (`psutil.Process(os.getpid())`
--> cpu_percent(non-blocking) + RSS) on a background thread. It currently samples
-only the launched process, not its subprocess tree. `stop()` keeps sampling
-until at least `MIN_WINDOW_SECONDS` (0.2 s) have elapsed since `start()` so
-fast transfers still collect usable averages, and is idempotent — later calls
-return the same stats.
+-> cpu_percent(non-blocking) + RSS) on a background thread. It samples only the
+launched process, not its subprocess tree. `stop()` keeps sampling until at
+least `MIN_WINDOW_SECONDS` (0.2 s) have elapsed since `start()` so fast
+transfers still collect usable averages, and is idempotent — later calls return
+the same stats.
 
 | Output | Definition |
 |---|---|
 | `avg_cpu_pct` | mean of CPU% samples, **divided once by `cpu_count`** (fraction of all host cores, 0-100) |
 | `peak_rss_mb` | max RSS sample in MiB |
-| `energy_j` | `(avg_cpu_pct / 100) x TDP x duration_s` |
 | `sample_count` | number of CPU/RAM samples behind the averages |
-
-`TDP` defaults to `CPU_TDP_WATTS` env var or **15.0 W**. The comment in the code
-notes this is an approximation; RAPL (`intel-rapl`) is more accurate.
 
 All clients sample at `sample_interval=0.01` (100 Hz); the chart tooling parses
 the units off the strings (e.g. `"2.71%"`, `"28.15 MB"`) - see
@@ -238,9 +262,12 @@ the units off the strings (e.g. `"2.71%"`, `"28.15 MB"`) - see
 **Caveats.** `avg_cpu_pct` is normalized by the *host* logical-core count
 (Docker CPU limits are not applied), so absolute values are small and mainly
 useful for relative comparison. `sample_count` is the confidence signal: rows
-with very few samples (fast transfers that only just cleared the 0.2 s minimum
-window) should be treated as low-confidence. `energy_j` is derived from CPU and
-a guessed TDP, not measured, so treat it as a rough relative indicator.
+with very few samples should be treated as low-confidence.
+
+**Energy was removed (v2).** Earlier runs recorded `energy_est` = CPU share ×
+an assumed 15 W TDP × duration. That described the benchmark host, not an IoT
+device, so it is no longer written or reported. Device energy is measured only
+in the field test, on the real hardware (USB / INA219 meter).
 
 ---
 
@@ -251,5 +278,8 @@ a guessed TDP, not measured, so treat it as a rough relative indicator.
 | `output/runs/<run_id>/{proto}_measurements.csv` | client container | every run (manual or automated) |
 | `output/runs/<run_id>/pcap_measurements.csv` | host harness | every run |
 | `output/runs/<run_id>/pcap/*.pcap` | capture sidecar | one per transfer |
+| `output/runs/<run_id>/transfer_failures.csv` | host harness | only when a client process exits non-zero |
+| `output/runs-legacy-v1/` | — | runs made before the v2 shaping fix (tag `analysis-v1-legacy`) |
+| `output/evidence/*.txt` | manual checks | verification evidence of the v2 changes |
 | `output/runs/<run_id>/charts/*.png` | `common/charts.py --run` | generated on demand |
 | `output/*_measurements*.csv`, `output/pcap/` | any | **legacy** — archived to `output/legacy/`, written only when no run is active |

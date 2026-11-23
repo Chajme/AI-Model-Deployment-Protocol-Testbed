@@ -85,8 +85,22 @@ PROTOCOL_CONFIG = {
     "lwm2m": {"filter": "coap",
               "type_fields": ["coap.code"],
               "is_tcp": False},
+    # http-get uses the http rule; mqtt-windowed aliases mqtt.
 }
 ```
+
+**TLS variant.** With `TLS=1` (`runner.py --tls`) `protocol_config()` returns
+`TLS_PROTOCOL_CONFIG`: the payload protocol is encrypted, so frames are
+selected by port (`tcp.port == 8443` for HTTP, `8883` for MQTT), the duration
+window uses data-carrying segments on that port, and the frame-type breakdown
+reports `ENCRYPTED`.
+
+**MQTT/AMQP captures cover the device leg only (v2).** The capture sidecar sits
+in the broker's network namespace, which carries both the server → broker and
+the broker → device leg. From v2 on, tcpdump runs with `host <client-b>`
+(`CAPTURE_FILTERS` in `common/packet_capture.py`), so overhead is computed for
+one leg against one file size. Legacy pcaps (`output/runs-legacy-v1/`) contain
+both legs, which is why they report ~115 % overhead.
 
 ---
 

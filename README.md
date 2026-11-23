@@ -8,7 +8,7 @@ default is 5/20/50 MB, editable at the bottom of
 `data/binary_file_generator.py`) over a network. It measures each transfer **twice**:
 
 - **client side** — runtime metrics collected inside the sender (goodput,
-  transfer time, latency, CPU, RAM, energy estimate, integrity),
+  transfer time, protocol round trip, CPU, RAM, integrity),
 - **packet side** — a pcap captured by a sidecar container and analyzed with
   tshark (packet counts, wire bytes, protocol overhead, retransmissions,
   goodput/throughput).
@@ -32,19 +32,27 @@ results are comparable across machines without needing a real network.
 - **Capture-faithful measurement** — NIC segmentation offloads (GRO/GSO/TSO)
   are disabled and tcpdump uses a 32 MiB kernel buffer so captures show real
   MTU-sized frames without drops.
-- **Client-side resource metrics** — CPU %, peak RSS, and a TDP-based energy
-  estimate sampled during each transfer.
+- **Client-side resource metrics** — CPU % and peak RSS sampled during each
+  transfer (the former TDP-based energy estimate was removed in v2).
+- **Device-style download** — `http-get` streams the payload with GET, hashes
+  it on the fly and resumes an interrupted download with a Range request.
+- **TLS variant** — `runner.py --tls` runs HTTPS (8443) and MQTT over TLS
+  (8883) with a generated test CA and records the TLS handshake time.
+- **Repetitions and statistics** — `runner.py --repeat N --sweep-id X`, and
+  `scripts/export_measurements.py --sweep-id X` reports median [Q1–Q3], n and
+  success rate per cell.
 - **End-to-end integrity** — SHA-256 is computed by the sender and verified by
   the receiver/server; every row records whether the file arrived intact.
 - **Emulated network profiles** — `good`, `iot`, `harsh`, `mobile`,
-  `satellite` applied with `tc netem` + `tbf` inside the containers (no real
-  network needed, reproducible on any host with NET_ADMIN).
+  `satellite`, `ltem` (LTE-M) and `nbiot` (NB-IoT) applied with `tc netem` +
+  `tbf` inside the containers. One constrained link per protocol (device ↔ its
+  data source), shaped in both directions — see docs/network-chaos.md.
 - **Automated sweep** — `runner.py` builds, starts, waits, drives, and tears
   down each protocol × profile combination; every experiment writes to its own
   immutable run directory (`output/runs/<run_id>/`).
 - **Chart generation** — `common/charts.py` turns the CSVs into PNG comparison
-  charts (line charts for size-dependent metrics, grouped bars for CPU/RAM/energy
-  and the overview dashboard), with min–max bands across repeat runs and
+  charts (line charts for size-dependent metrics, grouped bars for CPU/RAM
+  and the overview dashboard), with min–max or IQR bands across repeat runs and
   MQTT QoS 1/2 as distinct series.
 
 ---
@@ -88,7 +96,7 @@ common/                        host-side and shared helpers
   charts.py                    CSV → PNG comparison charts (line/bar, bands, QoS series)
   pcap_analyzer.py             tshark-based pcap analysis (overhead, goodput, retransmissions)
   packet_capture.py            tcpdump start/stop per run, offload tuning, pcap retrieval
-  resource_monitor.py          background CPU/RAM sampler + energy estimate
+  resource_monitor.py          background CPU/RAM sampler
   file_manager.py              data/output path helpers
   integrity_checker.py         SHA-256 helpers
 protocols/                     per-protocol containers and the orchestration entry points
@@ -144,7 +152,6 @@ Dockerfile                     app image (python:3.13.3-slim + iproute2 + ethtoo
 | integrity OK (bool) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | avg CPU % | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | peak RAM (MB) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| energy estimate (J) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | QoS level / side | — | ✓ (qos, sender/receiver) | — | ✓ (sender/receiver) | ✓ (sender/receiver) | ✓ (side=client) |
 | sample_count | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
@@ -153,8 +160,9 @@ samples behind the row's averages. `ResourceMonitor` enforces a 0.2 s minimum
 sampling window so fast transfers still collect samples; treat rows with very
 few samples as low-confidence.
 
-Energy is estimated as `avg CPU fraction × TDP × duration`, where TDP defaults
-to 15 W and can be overridden with the `CPU_TDP_WATTS` environment variable.
+HTTP GET (`http-get`) rows add `tls_handshake_s`, `resumed` and
+`bytes_resumed`; MQTT rows add `tls` and `tls_handshake_s`. See
+docs/metrics-schema.md for every column.
 
 ### Packet side (`output/runs/<run_id>/pcap_measurements.csv`)
 
@@ -278,7 +286,7 @@ with a legacy `--csv-dir`/`--suffix` fallback:
   overhead %, bytes, packets, retransmissions) — x = file size (log scale),
   one line per protocol, MQTT QoS 1/2 as dashed/dotted lines, repeat runs
   aggregated (mean) with a shaded min–max band.
-- **Grouped bar charts** for CPU/RAM/energy and the overview dashboard.
+- **Grouped bar charts** for CPU/RAM and the overview dashboard.
 
 Selection: `--run`, `--runs`, `--runs-dir`, `--protocols`, `--metrics`,
 `--file-sizes`, `--qos`, `--side`/`--mqtt-side` (default `auto`), `--no-client`,

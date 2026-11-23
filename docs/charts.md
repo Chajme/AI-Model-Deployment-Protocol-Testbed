@@ -19,14 +19,13 @@ pip install -r requirements-charts.txt
 `fields` maps each protocol to its CSV column (every protocol populates all
 columns via `common/resource_monitor.py`):
 
-| Metric | Title | y-label | size-dep. | http col | coap col | mqtt col | amqp col | grpc col | lwm2m col |
+| Metric | Title | y-label | size-dep. | http / http-get col | coap col | mqtt col | amqp col | grpc col | lwm2m col |
 |---|---|---|---|---|---|---|---|---|---|
 | `goodput_mbps` | Goodput (client-measured) | Mbps | yes | `goodput_mbps` | `goodput_mbps` | `goodput_mbps` | `goodput_mbps` | `goodput_mbps` | `goodput_mbps` |
 | `transfer_time` | Transfer time | seconds | yes | `time_to_transfer` | `time_to_transfer` | `sender_duration` | `sender_duration` | `sender_duration` | `download_duration` |
-| `latency` | Latency | seconds | yes | `latency_tcp_rtt` | `latency` | `latency` | `latency` | `latency` | `latency` |
+| `latency` | Control round trip (protocol-specific) | seconds | yes | `latency_tcp_rtt` | `latency` | `latency` | `latency` | `latency` | `latency` |
 | `avg_cpu_pct` | Avg CPU usage | % | no | `avg_cpu_usage` | `avg_cpu_usage` | `avg_cpu_usage` | `avg_cpu_usage` | `avg_cpu_usage` | `avg_cpu_usage` |
 | `peak_ram_mb` | Peak RAM | MB | no | `peak_ram_usage` | `peak_ram_usage` | `peak_ram_usage` | `peak_ram_usage` | `peak_ram_usage` | `peak_ram_usage` |
-| `energy_j` | Energy estimate | J | no | `energy_est` | `energy_est` | `energy_est` | `energy_est` | `energy_est` | `energy_est` |
 
 #### Metric semantics caveats
 
@@ -39,7 +38,7 @@ columns via `common/resource_monitor.py`):
   measure an *upload* (including metadata + acks); LwM2M measures the
   *blockwise download* only (registration and state exchange excluded), since
   LwM2M is a pull-model firmware update. Compare accordingly.
-- **`latency` differs per protocol**: TCP connect RTT (HTTP), Ping RPC RTT
+- **`latency` differs per protocol** (not comparable across protocols): TCP connect RTT (HTTP), Ping RPC RTT
   (gRPC), broker publish-confirm round trip (MQTT/AMQP), registration round
   trip (LwM2M), CoAP discovery GET (CoAP).
 
@@ -88,7 +87,7 @@ def _chart_type_for(metric_cfg, args):
 
 - **Line** — size-dependent metrics: file size on x (log by default), one line
   per (protocol, QoS) series, mean point + shaded band.
-- **Bar** — size-invariant metrics (CPU/RAM/energy) and the overview: grouped
+- **Bar** — size-invariant metrics (CPU/RAM) and the overview: grouped
   bars per protocol, QoS via hatching.
 - `--chart-type line|bar` forces a style for every metric.
 
@@ -125,7 +124,7 @@ Labels:
 
 ```python
 def _aggregate(values, agg):      # mean (default) | median | min | max
-def _error_bounds(values, error): # none | minmax (default) | std | q90
+def _error_bounds(values, error): # none | minmax (default) | std | q90 | iqr
 ```
 
 - Repeat runs of the same (protocol, size) collapse to a single point via
@@ -134,7 +133,8 @@ def _error_bounds(values, error): # none | minmax (default) | std | q90
   color.
 - Bar charts pass `yerr=[y-lo, hi-y]` to `ax.bar` (with `capsize=2`).
 - `q90` uses 10th/90th percentile indices (`round(0.1*(n-1))`); `std` uses
-  sample stdev around the mean.
+  sample stdev around the mean; `iqr` draws Q1–Q3 (`common/stats.quartiles`),
+  matching the export's median [Q1–Q3] cells — use it with `--agg median`.
 
 ---
 
@@ -235,10 +235,10 @@ python common/charts.py --suffix http_good   # legacy flat mode
 
 ---
 
-## 8. Output files (default run, 14 PNGs)
+## 8. Output files (default run, 13 PNGs)
 
 `client_goodput_mbps`, `client_transfer_time`, `client_latency`,
-`client_avg_cpu_pct`, `client_peak_ram_mb`, `client_energy_j`,
+`client_avg_cpu_pct`, `client_peak_ram_mb`,
 `pcap_goodput_mbps`, `pcap_wire_throughput_mbps`, `pcap_overhead_percentage`,
 `pcap_total_overhead_bytes`, `pcap_total_wire_bytes`, `pcap_retransmissions`,
 `pcap_total_packets`, `overview.png`.

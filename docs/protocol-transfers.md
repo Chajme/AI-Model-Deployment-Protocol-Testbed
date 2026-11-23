@@ -29,11 +29,16 @@ metric. This page documents the client and server code for all six.
      inject up to 10 s into `sender_duration`.
   5. `send_chunks()` publishes every 1 MiB chunk with
      `msg_info.wait_for_publish(timeout=60)` per chunk — one publish round-trip
-     per chunk (this is why MQTT goodput is low for large files).
+     per chunk (this is why MQTT goodput is low for large files). An
+     unacknowledged chunk now aborts the transfer (non-zero exit, counted as a
+     failed attempt). With `--window N` (protocol key `mqtt-windowed`, N = 20)
+     up to N chunks stay in flight (`max_inflight_messages_set`) and all
+     acknowledgements are awaited at the end, which isolates the cost of the
+     per-chunk wait.
   6. Duration is wall-clock across the chunk publishes only — the timer starts
      once the metadata ACK has arrived;
      `goodput_mbps = file_size × 8 / (duration × 1e6)`.
-  7. Writes a `side=sender` row with CPU/RAM/energy from `ResourceMonitor`
+  7. Writes a `side=sender` row with CPU/RAM from `ResourceMonitor`
      (wrapping the metadata + chunk publish window).
 - CLI: `--file <name> --qos <1|2>` (both required); sleeps 5 s on startup for
   the broker.
@@ -50,7 +55,7 @@ metric. This page documents the client and server code for all six.
   `time.perf_counter() - metadata_arrival_time`.
 - On the final chunk: computes duration, verifies the received file's SHA-256
   against the metadata checksum, stops the monitor, and writes a `side=receiver`
-  row with `integrity_ok` plus the CPU/RAM/energy columns.
+  row with `integrity_ok` plus the CPU/RAM columns.
 - **Single-chunk transfers** (file ≤ 1 chunk) record `receiver_duration="X"`
   and `goodput_mbps="X"` — a single chunk spans no measurable arrival window
   (the old sub-millisecond windows produced fake 1500+ Mbps rows).
@@ -318,4 +323,4 @@ benchmark above.
 |---|---|
 | `common/integrity_checker.py` | `sha256(bytes)` and streaming `compute_sha256_file(path)` (1 MiB read chunks) |
 | `common/file_manager.py` | `DATA_DIR`/`OUTPUT_DIR` from env (defaults `./data`, `./output`); `load_binary_files()` sorted by size; `save_file()`; `get_file_path_input/output`; `output_directory_exists()` |
-| `common/resource_monitor.py` | CPU/RAM/energy sampler (see [metrics-schema.md](metrics-schema.md)) |
+| `common/resource_monitor.py` | CPU/RAM sampler (see [metrics-schema.md](metrics-schema.md)) |
