@@ -10,7 +10,9 @@ services:
     networks:
       - mqtt-net
     volumes:
-      - ./protocols/MQTT/mosquitto-broker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      # MOSQUITTO_CONF=mosquitto-tls.conf (set by runner.py --tls) serves MQTT over TLS on 8883.
+      - ./protocols/MQTT/mosquitto-broker/${MOSQUITTO_CONF:-mosquitto.conf}:/mosquitto/config/mosquitto.conf:ro
+      - ./certs:/mosquitto/certs:ro
 
   # Sender = the server/CI side publishing the model. It sits in a good
   # network, so it is NOT shaped (NETWORK_PROFILE=none); only the broker <->

@@ -39,13 +39,18 @@ PROBE = {
     "amqp": ("amqp-client-a", "rabbitmq-broker", 5672),
     "grpc": ("grpc-client", "grpc-server", 50051),
 }
+# Protocols with a TLS variant (--tls) and the port they use with TLS.
+TLS_PORTS = {"http": 8443, "http-get": 8443, "mqtt": 8883}
+CERTS_DIR = "certs"
+NETSHOOT_IMAGE = "nicolaka/netshoot:v0.16"
+
 UDP_SETTLE_SECONDS = {
     "coap": 8,
     "lwm2m": 8,
 }
 
 
-def wait_for_service(env, protocol, timeout=60):
+def wait_for_service(env, protocol, timeout=60, tls=False):
     """Block until the protocol's server is reachable from its client container."""
     if protocol in UDP_SETTLE_SECONDS:
         seconds = UDP_SETTLE_SECONDS[protocol]
@@ -54,6 +59,8 @@ def wait_for_service(env, protocol, timeout=60):
         return
 
     service, host, port = PROBE[protocol]
+    if tls:
+        port = TLS_PORTS[protocol]
     code = (
         f"import socket;s=socket.create_connection(('{host}',{port}),timeout=2);s.close()"
     )
@@ -147,19 +154,39 @@ def resolve_sizes(tokens):
     return files
 
 
-def run_experiment(protocol, profile, run_id=None, files=None, qos_levels=None):
+def ensure_certs():
+    """Generate the test CA + server certificate once (scripts/gen_certs.sh).
+
+    Runs inside the pinned netshoot image so the host needs no openssl.
+    """
+    if os.path.isfile(os.path.join(CERTS_DIR, "ca.crt")):
+        return
+    print("Generating test TLS certificates (scripts/gen_certs.sh)...")
+    subprocess.run(
+        ["docker", "run", "--rm", "-v", f"{os.path.abspath('.')}:/work", "-w", "/work",
+         "--entrypoint", "sh", NETSHOOT_IMAGE, "scripts/gen_certs.sh", CERTS_DIR],
+        check=True,
+    )
+
+
+def run_experiment(protocol, profile, run_id=None, files=None, qos_levels=None,
+                   tls=False, meta=None):
     print(f"\n=== Running {protocol.upper()} | {profile} ===")
 
     # Every experiment writes to its own immutable run directory
     # (output/runs/<run_id>/) shared by the host harness and the containers.
     output_dir = os.path.abspath("output")
     rid = run_id or runs.run_id_for(protocol, profile)
+    if tls and not run_id:
+        rid += "_tls"
 
     env = BASE_ENV.copy()
     env["COMPOSE_FILE"] = COMPOSE_FILE_AUTOMATED
     env["COMPOSE_PROFILES"] = protocol
     env["NETWORK_PROFILE"] = profile
     env["RUN_ID"] = rid
+    env["TLS"] = "1" if tls else "0"
+    env["MOSQUITTO_CONF"] = "mosquitto-tls.conf" if tls else "mosquitto.conf"
 
     # Publish the experiment environment BEFORE creating the run: new_run()
     # snapshots os.environ into the manifest, so setting it afterwards records
@@ -170,7 +197,8 @@ def run_experiment(protocol, profile, run_id=None, files=None, qos_levels=None):
     # pcap rows land outside the run dir.
     os.environ.update(env)
 
-    runs.new_run(output_dir, protocol, profile, run_id=rid)
+    runs.new_run(output_dir, protocol, profile, run_id=rid,
+                 meta={"tls": tls, "shaping_model": "access-link-bidir-v2", **(meta or {})})
 
     # Sidecar marker lets containers (which lack RUN_ID) resolve the active run
     # through the output bind mount.
@@ -189,7 +217,7 @@ def run_experiment(protocol, profile, run_id=None, files=None, qos_levels=None):
             check=True,
         )
 
-        wait_for_service(env, protocol)
+        wait_for_service(env, protocol, tls=tls)
 
         runs.update_manifest(output_dir, rid, collect_provenance(env, protocol))
 
@@ -247,6 +275,12 @@ def main():
         help="MQTT QoS levels to sweep (default: 1 2).",
     )
     parser.add_argument(
+        "--tls",
+        action="store_true",
+        help="Run the TLS variant (HTTPS on 8443 / MQTT over TLS on 8883). "
+             f"Only for: {', '.join(TLS_PORTS)}.",
+    )
+    parser.add_argument(
         "--run-id",
         default=None,
         help="Explicit run id instead of the auto-generated timestamp+protocol+profile one.",
@@ -256,6 +290,13 @@ def main():
     if not args.protocols or not args.profiles:
         print("Nothing to run.")
         return
+
+    if args.tls:
+        unsupported = [p for p in args.protocols if p not in TLS_PORTS]
+        if unsupported:
+            parser.error(f"--tls is only implemented for {', '.join(TLS_PORTS)} "
+                         f"(not: {', '.join(unsupported)})")
+        ensure_certs()
 
     ensure_payloads()
     files = resolve_sizes(args.sizes.split(",")) if args.sizes else None
@@ -270,7 +311,7 @@ def main():
     for protocol, profile in itertools.product(args.protocols, args.profiles):
         try:
             run_experiment(protocol, profile, run_id=args.run_id,
-                           files=files, qos_levels=args.qos)
+                           files=files, qos_levels=args.qos, tls=args.tls)
         except Exception as e:
             # One protocol/profile failing (e.g. a stack that won't come up)
             # must not abort the rest of the sweep, otherwise a single bad

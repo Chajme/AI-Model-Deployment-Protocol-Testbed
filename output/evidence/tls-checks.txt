@@ -1,0 +1,16 @@
+# TLS checks (Phase 4), 2026-11-23T12:40:24, profile=good
+
+## run 20261123T113642_http-get_good_tls
+http-get_binary_file_1mb.bin.pcap: ClientHello frames=2, data segments on tcp/8443=760, plaintext 'http' frames=0
+http-get_binary_file_250kb.bin.pcap: ClientHello frames=2, data segments on tcp/8443=194, plaintext 'http' frames=0
+
+## run 20261123T113913_mqtt_good_tls
+mqtt_binary_file_1mb.bin_1.pcap: ClientHello frames=0, data segments on tcp/8883=733, plaintext 'mqtt' frames=0
+mqtt_binary_file_250kb.bin_1.pcap: ClientHello frames=0, data segments on tcp/8883=181, plaintext 'mqtt' frames=0
+
+## Certificate verification from http-client (CA = certs/ca.crt, strict X.509)
+verify ok: TLSv1.3 ((('commonName', 'protocol-testbed-server'),),)
+
+Note: the MQTT device connection is set up when client-b starts, before the
+per-transfer capture begins, so its ClientHello is not in these pcaps; the
+device-side handshake is recorded in the receiver rows (tls_handshake_s, 72 ms).

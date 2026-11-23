@@ -18,3 +18,5 @@ output/*.csv
 output/*.bin
 data/*.bin
 uploads/
+# Test TLS material (scripts/gen_certs.sh)
+certs/

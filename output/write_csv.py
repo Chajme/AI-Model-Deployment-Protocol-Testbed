@@ -140,6 +140,8 @@ def write_to_file_mqtt(data: list[dict]):
         'protocol',
         'qos',
         'side',
+        'tls',
+        'tls_handshake_s',
         'file_size',
         'sender_duration',
         'receiver_duration',

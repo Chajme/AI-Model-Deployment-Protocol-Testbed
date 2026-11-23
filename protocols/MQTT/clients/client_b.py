@@ -1,5 +1,8 @@
 import paho.mqtt.client as mqtt
 import json
+import os
+import socket
+import ssl
 import time
 
 from common.file_manager import get_file_path_input, output_directory_exists, get_file_path_output
@@ -11,7 +14,10 @@ BROKER = "mosquitto-broker"
 TOPIC_CTRL = "file/control"
 TOPIC_DATA = "file/data"
 
-PORT = 1883
+# TLS=1: MQTT over TLS on 8883, broker certificate verified against certs/ca.crt.
+TLS = os.getenv("TLS", "0") == "1"
+CA_FILE = os.path.join(os.getenv("CERTS_DIR", "/app/certs"), "ca.crt")
+PORT = 8883 if TLS else 1883
 KEEPALIVE = 300
 
 # Global state to keep track of the incoming file
@@ -32,6 +38,32 @@ expected_checksum = None
 monitor = None
 
 _current_qos = "unknown"
+
+# Device-side TLS handshake over the constrained link, measured once at
+# startup: the device keeps one persistent MQTT connection, so TLS setup is a
+# per-connection cost, not a per-transfer one. Written into every receiver row.
+device_tls_handshake = None
+
+
+def measure_tls_handshake(attempts=15, delay=2):
+    """Time a TLS handshake to the broker on a bare socket (TLS=1 only)."""
+    for attempt in range(1, attempts + 1):
+        try:
+            sock = socket.create_connection((BROKER, PORT), timeout=30)
+            try:
+                context = ssl.create_default_context(cafile=CA_FILE)
+                start = time.perf_counter()
+                tls_sock = context.wrap_socket(sock, server_hostname=BROKER)
+                handshake = time.perf_counter() - start
+                tls_sock.close()
+            finally:
+                sock.close()
+            print(f"[client_b] device TLS handshake: {handshake:.5f}s")
+            return handshake
+        except OSError as e:
+            print(f"[client_b] TLS probe attempt {attempt}/{attempts} failed: {e}")
+            time.sleep(delay)
+    return None
 
 
 def _connect_with_retries(client, host, port, attempts=15, delay=2):
@@ -88,6 +120,8 @@ def _transfer_completed_handler():
             "protocol": "mqtt",
             "qos": _current_qos,
             "side": "receiver",
+            "tls": TLS,
+            "tls_handshake_s": f"{device_tls_handshake:.5f}" if device_tls_handshake is not None else "X",
             "file_size": file_size_mb,
             "sender_duration": "X",
             "receiver_duration": "X" if single_chunk else f"{transfer_duration:.3f}",
@@ -182,6 +216,9 @@ if __name__ == '__main__':
     client = mqtt.Client()
     client.on_connect = on_connect
     client.on_message = on_message
+    if TLS:
+        client.tls_set(ca_certs=CA_FILE)
+        device_tls_handshake = measure_tls_handshake()
 
     _connect_with_retries(client, BROKER, PORT)
     client.loop_forever()

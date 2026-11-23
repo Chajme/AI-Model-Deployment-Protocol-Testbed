@@ -235,6 +235,10 @@ def download_file(filename: str) -> None:
                     if received < size:
                         raise requests.exceptions.ChunkedEncodingError(
                             f"connection closed at {received}/{size} B")
+                except requests.exceptions.SSLError as e:
+                    # A certificate/handshake failure is a configuration
+                    # error, not a dropped connection: don't retry it.
+                    raise DownloadFailed(f"TLS error: {e}") from e
                 except (requests.exceptions.ConnectionError,
                         requests.exceptions.ChunkedEncodingError,
                         requests.exceptions.Timeout) as e:

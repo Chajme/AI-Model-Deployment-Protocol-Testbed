@@ -126,6 +126,37 @@ Both protocol keys use the same client module and server; `http-get` passes
 
 ---
 
+## TLS variant (`runner.py --tls`) — HTTPS and MQTT over TLS
+
+Implemented for `http`, `http-get` and `mqtt` (the minimum TLS set of the
+v2 plan); other protocols reject `--tls`.
+
+- **Certificates.** `scripts/gen_certs.sh` creates a self-signed test CA and one
+  server certificate (SAN `http-server`, `mosquitto-broker`) in `certs/`
+  (git-ignored). `runner.py --tls` runs it automatically in the pinned netshoot
+  image when `certs/ca.crt` is missing. The CA carries explicit
+  `basicConstraints`/`keyUsage`, because Python 3.13 verifies certificates
+  strictly.
+- **Switch.** `--tls` sets `TLS=1` for the stack and the harness, appends
+  `_tls` to the run id and records `"tls": true` in `run.json`.
+- **HTTP.** gunicorn binds `0.0.0.0:8443` with `server.crt/key`; the client
+  uses `https://http-server:8443` verified against `certs/ca.crt`.
+  `tls_handshake_s` = handshake time on a bare socket after the TCP connect.
+- **MQTT.** `MOSQUITTO_CONF=mosquitto-tls.conf` makes the broker listen on 8883
+  with the same certificate; both clients call `tls_set(ca_certs=...)`.
+  Sender rows record the publisher's handshake (server side, clean link);
+  receiver rows record the **device's** handshake over the constrained link,
+  measured once at `client-b` startup (one persistent connection, so TLS setup
+  is a per-connection cost, not a per-transfer one).
+- **pcap analysis.** The payload protocol is encrypted, so
+  `TLS_PROTOCOL_CONFIG` in `common/pcap_analyzer.py` selects frames by port
+  (`tcp.port == 8443` / `8883`) and the frame-type breakdown reports
+  `ENCRYPTED`.
+- Evidence: `output/evidence/tls-checks.txt` (ClientHello present, 0
+  plaintext `http`/`mqtt` frames, strict certificate verification OK).
+
+---
+
 ## CoAP — blockwise PUT (aiocoap)
 
 ### Client: `protocols/CoAP/client/coap_client.py`

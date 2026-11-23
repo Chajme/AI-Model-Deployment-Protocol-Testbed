@@ -9,6 +9,8 @@ import time
 import os
 import json
 import math
+import socket
+import ssl
 import threading
 
 from common.file_manager import get_file_path_input
@@ -17,6 +19,10 @@ from common.resource_monitor import ResourceMonitor
 from output.write_csv import write_to_file_mqtt
 
 BROKER = "mosquitto-broker"
+# TLS=1: MQTT over TLS on 8883, broker certificate verified against certs/ca.crt.
+TLS = os.getenv("TLS", "0") == "1"
+CA_FILE = os.path.join(os.getenv("CERTS_DIR", "/app/certs"), "ca.crt")
+PORT = 8883 if TLS else 1883
 TOPIC_CTRL = "file/control"
 TOPIC_DATA = "file/data"
 
@@ -38,8 +44,31 @@ def on_publish(client, userdata, mid):
 def make_client():
     c = mqtt.Client()
     c.on_publish = on_publish
-    c.connect(BROKER, 1883, 300)
+    if TLS:
+        c.tls_set(ca_certs=CA_FILE)
+    c.connect(BROKER, PORT, 300)
     return c
+
+
+def measure_tls_handshake() -> float | None:
+    """TLS handshake time to the broker, timed on a bare socket (None without TLS).
+
+    Kept separate from the transfer so the TLS setup cost can be reported on
+    its own, like tls_handshake_s for http-get.
+    """
+    if not TLS:
+        return None
+    sock = socket.create_connection((BROKER, PORT), timeout=30)
+    try:
+        context = ssl.create_default_context(cafile=CA_FILE)
+        start = time.perf_counter()
+        tls_sock = context.wrap_socket(sock, server_hostname=BROKER)
+        handshake = time.perf_counter() - start
+        tls_sock.close()
+    finally:
+        sock.close()
+    print(f"TLS handshake: {handshake:.5f}s")
+    return handshake
 
 def calculate_total_chunks(filepath):
     file_size = os.path.getsize(filepath)
@@ -89,6 +118,12 @@ def send_file(filename, qos_level):
         print(f"File {filepath} not found.")
         return
 
+    try:
+        tls_handshake = measure_tls_handshake()
+    except Exception as e:
+        print(f"TLS handshake probe failed: {e}")
+        tls_handshake = None
+
     client = make_client()
     client.loop_start()
 
@@ -127,6 +162,8 @@ def send_file(filename, qos_level):
             "protocol": "mqtt",
             "qos": qos_level,
             "side": "sender",
+            "tls": TLS,
+            "tls_handshake_s": f"{tls_handshake:.5f}" if tls_handshake is not None else "X",
             "file_size": file_size / (1024 * 1024),
             "sender_duration": f"{duration:.3f}",
             "receiver_duration": "X",
