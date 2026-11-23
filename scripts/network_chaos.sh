@@ -53,6 +53,21 @@ set_profile() {
       NETEM="delay 600ms 100ms 20% loss 0.5%"
       TBF="rate 1mbit burst 64kbit latency 1000ms"
       ;;
+    ltem)
+      # LTE-M (Cat-M1): ~300 kbit/s realistic throughput (3GPP TS 36.306),
+      # one-way 75 ms -> RTT ~150 ms with both link ends shaped.
+      # Starting values from the literature; recalibrate on the field SIM.
+      NETEM="delay 75ms 25ms 25% loss 0.5%"
+      TBF="rate 300kbit burst 16kbit latency 1500ms"
+      ;;
+    nbiot)
+      # NB-IoT (Cat-NB1): ~26 kbit/s downlink peak (3GPP TS 36.306), latency
+      # target <= 10 s (3GPP TR 45.820); one-way 800 ms -> RTT ~1.6 s with both
+      # link ends shaped. Moderate jitter: large netem jitter reorders packets
+      # and would penalise TCP unrealistically. Recalibrate on the field SIM.
+      NETEM="delay 800ms 150ms 25% loss 1%"
+      TBF="rate 25kbit burst 4kbit latency 8000ms"
+      ;;
     none)
       NETEM=""
       TBF=""

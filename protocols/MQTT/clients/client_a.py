@@ -128,7 +128,7 @@ def send_file(filename, qos_level):
             "qos": qos_level,
             "side": "sender",
             "file_size": file_size / (1024 * 1024),
-            "sender_duration": f"{duration:.2f}",
+            "sender_duration": f"{duration:.3f}",
             "receiver_duration": "X",
             "latency": f"{ack_latency:.4f}",
             "goodput_mbps": f"{goodput_mbps:.3f}",

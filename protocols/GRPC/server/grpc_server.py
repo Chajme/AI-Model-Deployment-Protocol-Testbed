@@ -137,7 +137,7 @@ class FileTransferServicer(pb_grpc.FileTransferServicer):
                     "side": "receiver",
                     "file_size": received_bytes / (1024 * 1024),
                     "sender_duration": "X",
-                    "receiver_duration": f"{receiver_duration:.2f}",
+                    "receiver_duration": f"{receiver_duration:.3f}",
                     "latency": "X",
                     "goodput_mbps": f"{(received_bytes * 8) / (receiver_duration * 1_000_000):.3f}",
                     "integrity_ok": integrity_ok,

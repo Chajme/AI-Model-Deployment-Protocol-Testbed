@@ -90,7 +90,7 @@ def _transfer_completed_handler():
             "side": "receiver",
             "file_size": file_size_mb,
             "sender_duration": "X",
-            "receiver_duration": "X" if single_chunk else f"{transfer_duration:.2f}",
+            "receiver_duration": "X" if single_chunk else f"{transfer_duration:.3f}",
             "latency": f"{start_latency:.4f}",
             "goodput_mbps": "X" if single_chunk else f"{goodput_mbps:.3f}",
             "integrity_ok": integrity_ok,

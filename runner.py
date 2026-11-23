@@ -122,7 +122,31 @@ def collect_provenance(env, protocol):
     return meta
 
 
-def run_experiment(protocol, profile, run_id=None):
+def resolve_sizes(tokens):
+    """Map --sizes tokens (e.g. 250kb, 1mb) to payload filenames in data/.
+
+    Payloads are named binary_file_<size>.bin by data/binary_file_generator.py.
+    Fails fast if a requested size has no payload file.
+    """
+    from common.file_manager import DATA_DIR
+
+    files = []
+    for token in tokens:
+        name = f"binary_file_{token.strip().lower()}.bin"
+        if not os.path.isfile(os.path.join(DATA_DIR, name)):
+            available = sorted(
+                f[len("binary_file_"):-len(".bin")]
+                for f in os.listdir(DATA_DIR)
+                if f.startswith("binary_file_") and f.endswith(".bin")
+            )
+            raise SystemExit(f"ERROR: no payload for size '{token}' "
+                             f"(available: {', '.join(available)})")
+        files.append(name)
+    files.sort(key=lambda f: os.path.getsize(os.path.join(DATA_DIR, f)))
+    return files
+
+
+def run_experiment(protocol, profile, run_id=None, files=None, qos_levels=None):
     print(f"\n=== Running {protocol.upper()} | {profile} ===")
 
     # Every experiment writes to its own immutable run directory
@@ -168,7 +192,7 @@ def run_experiment(protocol, profile, run_id=None):
 
         runs.update_manifest(output_dir, rid, collect_provenance(env, protocol))
 
-        run_protocol(protocol)
+        run_protocol(protocol, files=files, qos_levels=qos_levels)
 
     finally:
         # Always clean up
@@ -209,6 +233,19 @@ def main():
         help="Network profiles to run (default: mobile).",
     )
     parser.add_argument(
+        "--sizes",
+        default=None,
+        help="Comma-separated payload sizes to transfer, e.g. 250kb,1mb,5mb "
+             "(default: every data/*.bin). Use it to keep slow profiles short.",
+    )
+    parser.add_argument(
+        "--qos",
+        nargs="+",
+        type=int,
+        default=None,
+        help="MQTT QoS levels to sweep (default: 1 2).",
+    )
+    parser.add_argument(
         "--run-id",
         default=None,
         help="Explicit run id instead of the auto-generated timestamp+protocol+profile one.",
@@ -220,6 +257,7 @@ def main():
         return
 
     ensure_payloads()
+    files = resolve_sizes(args.sizes.split(",")) if args.sizes else None
 
     build_cmd = ["docker", "compose", "-f", COMPOSE_FILE_AUTOMATED]
     for protocol in args.protocols:
@@ -230,7 +268,8 @@ def main():
     failures = []
     for protocol, profile in itertools.product(args.protocols, args.profiles):
         try:
-            run_experiment(protocol, profile, run_id=args.run_id)
+            run_experiment(protocol, profile, run_id=args.run_id,
+                           files=files, qos_levels=args.qos)
         except Exception as e:
             # One protocol/profile failing (e.g. a stack that won't come up)
             # must not abort the rest of the sweep, otherwise a single bad
