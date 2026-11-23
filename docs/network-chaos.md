@@ -145,7 +145,7 @@ ISSUES.md FIXED-15.
 | `mobile` | `delay 150ms 150ms 60%`, `loss 3% 40%`, `reorder 0.5% 50%` | `rate 1mbit burst 32kbit latency 300ms` | unstable cellular |
 | `satellite` | `delay 600ms 100ms 20%`, `loss 0.5%` | `rate 1mbit burst 64kbit latency 1000ms` | GEO satellite |
 | `ltem` | `delay 75ms 25ms 25%`, `loss 0.5%` | `rate 300kbit burst 16kbit latency 1500ms` | LTE-M (Cat-M1): ~300 kbit/s realistic throughput (3GPP TS 36.306, UE category M1); RTT ≈ 150 ms |
-| `nbiot` | `delay 800ms 150ms 25%`, `loss 1%` | `rate 25kbit burst 4kbit latency 8000ms` | NB-IoT (Cat-NB1): ~26 kbit/s downlink peak (3GPP TS 36.306); latency target ≤ 10 s (3GPP TR 45.820); RTT ≈ 1.6 s |
+| `nbiot` | `delay 800ms 150ms 25%`, `loss 1%` | `rate 25kbit burst 16kbit latency 8000ms` | NB-IoT (Cat-NB1): ~26 kbit/s downlink peak (3GPP TS 36.306); latency target ≤ 10 s (3GPP TR 45.820); RTT ≈ 1.6 s |
 
 The delays are **one-way**: both ends of the constrained link are shaped, so
 the RTT is about 2 × delay. The cellular values (`ltem`, `nbiot`) are starting

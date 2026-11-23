@@ -16,6 +16,7 @@ import argparse
 import os
 import subprocess
 import sys
+import time
 
 # Allow running as a plain script too: `python protocols/benchmark_manager.py`
 # otherwise puts `protocols/` (not the project root) on sys.path.
@@ -45,6 +46,13 @@ RUNNERS = {
         "service": "mqtt-client-a",
         "module": "protocols.MQTT.clients.client_a",
         "has_qos": True,
+    },
+    # Same client with up to 20 chunks in flight (see client_a.send_chunks).
+    "mqtt-windowed": {
+        "service": "mqtt-client-a",
+        "module": "protocols.MQTT.clients.client_a",
+        "has_qos": True,
+        "args": ["--window", "20"],
     },
     "http": {
         "service": "http-client",
@@ -104,6 +112,7 @@ def run_transfer(protocol: str, filename: str, qos: int | None = None, analyze: 
     print(f"  -> Capturing to {outfile}")
 
     transfer_failed = False
+    receivers_before = _receiver_row_count(protocol)
     try:
         command = [
             "docker", "compose", "exec", runner["service"],
@@ -115,6 +124,16 @@ def run_transfer(protocol: str, filename: str, qos: int | None = None, analyze: 
             command += ["--qos", str(qos)]
 
         subprocess.run(command, check=True)
+
+        # Broker protocols: the sender only hands the file to the broker over
+        # the clean server-side link. Delivery to the device over the
+        # constrained link continues after the sender exits, so keep the
+        # capture (and the stack) up until the receiver has verified the file.
+        if receivers_before is not None and not _wait_for_receiver(
+                protocol, receivers_before, file_size_bytes(filename)):
+            transfer_failed = True
+            exit_code = "receiver-timeout"
+            print("  -> WARNING: the receiver did not report the file before the timeout")
     except subprocess.CalledProcessError as e:
         # One failed transfer must not abort the rest of the sweep; the client
         # has already logged a failure row for this file.
@@ -151,6 +170,72 @@ def run_transfer(protocol: str, filename: str, qos: int | None = None, analyze: 
 
     print_result(result)
     write_to_file_pcap([result])
+
+
+# Broker protocols whose transfer is complete only when the receiver (the
+# device, client-b) has written its row; value = CSV schema the receiver writes.
+RECEIVER_CSV = {"mqtt": "mqtt", "mqtt-windowed": "mqtt", "amqp": "amqp"}
+RECEIVER_SERVICE = {"mqtt": "mqtt-client-b", "mqtt-windowed": "mqtt-client-b",
+                    "amqp": "amqp-client-b"}
+# Slowest delivery rate the wait has to allow for (NB-IoT is ~25 kbit/s).
+RECEIVER_MIN_BPS = int(os.getenv("RECEIVER_MIN_BPS", "16000"))
+RECEIVER_BASE_TIMEOUT_S = 120
+
+
+def _receiver_row_count(protocol: str) -> int | None:
+    """Receiver rows already in the active run's CSV (None = not applicable)."""
+    kind = RECEIVER_CSV.get(protocol)
+    run_id = runs.active_run_id()
+    if kind is None or not run_id:
+        return None
+    import csv
+
+    path = os.path.join(runs.run_dir(os.environ.get("OUTPUT_DIR", "./output"), run_id),
+                        f"{kind}_measurements.csv")
+    if not os.path.isfile(path):
+        return 0
+    try:
+        with open(path, newline="", encoding="utf-8") as fh:
+            return sum(1 for row in csv.DictReader(fh) if row.get("side") == "receiver")
+    except OSError:
+        return 0
+
+
+def _wait_for_receiver(protocol: str, before: int, size_bytes: int) -> bool:
+    """Block until the receiver writes a new row; False on timeout."""
+    timeout = RECEIVER_BASE_TIMEOUT_S + size_bytes * 8 / RECEIVER_MIN_BPS
+    deadline = time.time() + timeout
+    next_note = time.time() + 30
+    next_check = time.time() + 10
+    while time.time() < deadline:
+        if (_receiver_row_count(protocol) or 0) > before:
+            return True
+        if time.time() >= next_check:
+            # Fail fast when the receiver process died (its container exits):
+            # otherwise a crash costs the whole size-scaled timeout.
+            if not _service_running(RECEIVER_SERVICE[protocol]):
+                print(f"  -> ERROR: receiver {RECEIVER_SERVICE[protocol]} is no longer running")
+                return False
+            next_check += 10
+        if time.time() >= next_note:
+            print("  -> waiting for the device (receiver) to finish ...")
+            next_note += 30
+        time.sleep(1)
+    return False
+
+
+def _service_running(service: str) -> bool:
+    """True if the compose service has a running container."""
+    try:
+        out = subprocess.run(
+            ["docker", "compose", "ps", "--status", "running", "--services"],
+            capture_output=True, text=True, timeout=30,
+        )
+    except Exception:
+        return True          # unknown: keep waiting rather than abort
+    if out.returncode != 0:
+        return True
+    return service in out.stdout.split()
 
 
 def _log_transfer_failure(protocol: str, filename: str, qos, returncode) -> None:

@@ -6,6 +6,7 @@ import time
 # namespace (mqtt-client <-> broker, http-client <-> server, coap-client <-> server).
 CAPTURE_SERVICES = {
     "mqtt": "mqtt-capture",
+    "mqtt-windowed": "mqtt-capture",
     "http": "http-capture",
     "http-get": "http-capture",
     "coap": "coap-capture",
@@ -23,6 +24,7 @@ DEFAULT_IFACE = "eth0"
 # leg against one file size (the old two-leg capture reported ~115 %).
 CAPTURE_FILTERS = {
     "mqtt": "host mqtt-client-b",
+    "mqtt-windowed": "host mqtt-client-b",
     "amqp": "host amqp-client-b",
 }
 
@@ -47,6 +49,7 @@ CAPTURE_SETTLE_SECONDS = 2.0
 # network namespace). CoAP runs over UDP (no TSO/GSO), so nothing to disable.
 OFFLOAD_CONTAINERS = {
     "mqtt": ["mqtt-client-a", "mqtt-client-b"],
+    "mqtt-windowed": ["mqtt-client-a", "mqtt-client-b"],
     "http": ["http-client"],
     "http-get": ["http-client"],
     "coap": [],

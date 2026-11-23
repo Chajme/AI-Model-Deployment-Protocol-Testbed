@@ -386,7 +386,7 @@ modem exists.
 | Profile | netem | tbf | Basis |
 |---|---|---|---|
 | `ltem` | `delay 75ms 25ms 25%`, `loss 0.5%` | `rate 300kbit burst 16kbit latency 1500ms` | Cat-M1 realistic throughput of about 300 kbit/s (3GPP TS 36.306, UE category M1); RTTs of about 100–200 ms on live networks |
-| `nbiot` | `delay 800ms 150ms 25%`, `loss 1%` | `rate 25kbit burst 4kbit latency 8000ms` | Cat-NB1 downlink peak of about 26 kbit/s (TS 36.306); 3GPP TR 45.820 latency target ≤ 10 s; field RTTs of about 1–2 s are commonly reported |
+| `nbiot` | `delay 800ms 150ms 25%`, `loss 1%` | `rate 25kbit burst 16kbit latency 8000ms` (burst must be ≥ one full frame) | Cat-NB1 downlink peak of about 26 kbit/s (TS 36.306); 3GPP TR 45.820 latency target ≤ 10 s; field RTTs of about 1–2 s are commonly reported |
 
 Notes:
 

@@ -114,6 +114,17 @@ measures runtime metrics, and appends its own row to
 `RUN_ID` env var, or from the `.active_run` marker written by the host into the
 output bind mount.
 
+**Broker protocols (MQTT, `mqtt-windowed`, AMQP).** The sender only hands the
+file to the broker over the clean server-side link; delivery to the device
+(`client-b`) over the constrained link continues after the sender exits. The
+harness therefore keeps the capture and the stack up until the receiver has
+written its verified row (`_wait_for_receiver` in
+`protocols/benchmark_manager.py`; timeout `120 s + size × 8 / RECEIVER_MIN_BPS`,
+default 16 kbit/s). It aborts early if the receiver container stops, and records
+`receiver-timeout` in `transfer_failures.csv` when the row never arrives. The
+receiver row carries `delivery_duration` (metadata arrival → file verified) and
+`delivery_goodput_mbps`, which the v2 report uses as the MQTT/AMQP transfer view.
+
 ### 2c. `stop_capture_run(protocol, container_pcap_path, host_pcap_dir)`
 
 1. **Settle** — waits `CAPTURE_SETTLE_SECONDS = 2.0` so the transfer tail

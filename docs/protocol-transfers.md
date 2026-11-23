@@ -206,6 +206,12 @@ subtlety: an ACK **echoes the request's MID**, so raw MID counting over-counts).
 
 ## AMQP — chunked publish over RabbitMQ with publisher confirms
 
+**Broker settings** (`protocols/AMQP/broker/rabbitmq.conf`, mounted into
+`/etc/rabbitmq/conf.d/`): `tcp_listen_options.send_timeout = 600000` and
+`heartbeat = 600`. Once the broker → device link is shaped, writing a 1 MB
+message to the receiver takes far longer than RabbitMQ's default 15 s write
+timeout, which reset the receiver's connection mid-transfer.
+
 ### Sender: `protocols/AMQP/client/amqp_client.py`
 
 - Broker: `rabbitmq-broker:5672` (`rabbitmq:3-alpine`).

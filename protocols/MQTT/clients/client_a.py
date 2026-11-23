@@ -41,9 +41,12 @@ def on_publish(client, userdata, mid):
         print(f"Metadata ACK received in {ack_latency:.4f}s")
         metadata_ack_event.set()
 
-def make_client():
+def make_client(window=0):
     c = mqtt.Client()
     c.on_publish = on_publish
+    if window:
+        # Allow up to `window` unacknowledged QoS>0 messages in flight.
+        c.max_inflight_messages_set(window)
     if TLS:
         c.tls_set(ca_certs=CA_FILE)
     c.connect(BROKER, PORT, 300)
@@ -95,23 +98,54 @@ def send_metadata(filename, total_chunks, checksum, qos_level, client):
     return msg_info, metadata_payload_len
 
 
-def send_chunks(filepath, total_chunks, qos_level, client):
+PUBLISH_TIMEOUT_S = 60
+
+
+class PublishFailed(Exception):
+    pass
+
+
+def send_chunks(filepath, total_chunks, qos_level, client, window=0):
+    """Publish the file in CHUNK_SIZE messages.
+
+    window == 0 (protocol key mqtt): wait for each chunk's acknowledgement
+    before sending the next one -- an effective in-flight window of 1, which
+    is what the legacy measurements used.
+    window > 0 (protocol key mqtt-windowed): keep up to `window` chunks in
+    flight (paho max_inflight_messages) and wait for all acknowledgements at
+    the end. Comparing the two isolates how much of MQTT's throughput comes
+    from this client's stop-and-wait rather than from the protocol.
+    """
     chunk_lengths = []
+    pending = []
     with open(filepath, "rb") as f:
         for chunk_num in range(total_chunks):
             chunk = f.read(CHUNK_SIZE)
             chunk_lengths.append(len(chunk))
 
             msg_info = client.publish(TOPIC_DATA, bytearray(chunk), qos=qos_level)
-            msg_info.wait_for_publish(timeout=60)
+            if window:
+                pending.append(msg_info)
+            else:
+                msg_info.wait_for_publish(timeout=PUBLISH_TIMEOUT_S)
+                if not msg_info.is_published():
+                    raise PublishFailed(f"chunk {chunk_num + 1} not acknowledged "
+                                        f"within {PUBLISH_TIMEOUT_S}s")
 
             if chunk_num % 10 == 0 or chunk_num == total_chunks - 1:
                 print(f"Sent chunk {chunk_num + 1}/{total_chunks}")
 
+    # Windowed mode: a generous overall deadline for the whole tail of acks.
+    deadline = time.time() + PUBLISH_TIMEOUT_S * max(1, len(pending))
+    for i, msg_info in enumerate(pending, 1):
+        msg_info.wait_for_publish(timeout=max(0.0, deadline - time.time()))
+        if not msg_info.is_published():
+            raise PublishFailed(f"chunk {i} not acknowledged before the deadline")
+
     return chunk_lengths
 
 
-def send_file(filename, qos_level):
+def send_file(filename, qos_level, window=0):
     global ack_latency
     filepath = os.path.join(get_file_path_input(filename))
     if not os.path.exists(filepath):
@@ -124,7 +158,7 @@ def send_file(filename, qos_level):
         print(f"TLS handshake probe failed: {e}")
         tls_handshake = None
 
-    client = make_client()
+    client = make_client(window)
     client.loop_start()
 
     file_size, total_chunks = calculate_total_chunks(filepath)
@@ -148,7 +182,16 @@ def send_file(filename, qos_level):
         print("WARNING: Timed out waiting for metadata ACK, proceeding anyway.")
 
     start_time = time.time()
-    chunk_lengths = send_chunks(filepath, total_chunks, qos_level, client)
+    try:
+        chunk_lengths = send_chunks(filepath, total_chunks, qos_level, client, window)
+    except PublishFailed as e:
+        # Exit non-zero: the harness records the failed attempt in
+        # transfer_failures.csv and the export counts it against the success rate.
+        print(f"ERROR: {e}")
+        client.loop_stop()
+        client.disconnect()
+        monitor.stop()
+        raise SystemExit(1)
     end_time = time.time()
     client.loop_stop()
     client.disconnect()
@@ -188,9 +231,11 @@ if __name__ == "__main__":
 
     parser.add_argument("--file", required=True)
     parser.add_argument("--qos", required=True, type=int)
+    parser.add_argument("--window", type=int, default=0,
+                        help="Chunks in flight (0 = wait for each ack, the default).")
 
     args = parser.parse_args()
 
     time.sleep(5)  # Wait for broker
 
-    send_file(args.file, args.qos)
+    send_file(args.file, args.qos, args.window)

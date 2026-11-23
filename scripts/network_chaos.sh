@@ -65,8 +65,10 @@ set_profile() {
       # target <= 10 s (3GPP TR 45.820); one-way 800 ms -> RTT ~1.6 s with both
       # link ends shaped. Moderate jitter: large netem jitter reorders packets
       # and would penalise TCP unrealistically. Recalibrate on the field SIM.
+      # tbf burst must be >= one full frame (~1514 B): with burst 4kbit (512 B)
+      # every full-size segment was silently dropped (only pings got through).
       NETEM="delay 800ms 150ms 25% loss 1%"
-      TBF="rate 25kbit burst 4kbit latency 8000ms"
+      TBF="rate 25kbit burst 16kbit latency 8000ms"
       ;;
     none)
       NETEM=""

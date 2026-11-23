@@ -127,3 +127,7 @@ def test_newest_complete_run_is_picked_without_sweep(tmp_path):
               "network_profile": "good", "file_sizes": [256000]}, [], "http-get")
     run, complete = ex.pick_canonical(ex.load_runs(str(tmp_path)), "http-get", "good")
     assert run["id"] == "20260101T000000_http-get_good" and complete
+
+
+def test_aggregate_cell_single_run_shows_value_and_n():
+    assert ex.aggregate_cell(["0.362"], ok=1, attempts=1) == "0.362 n=1 100%" + ex.FLAG

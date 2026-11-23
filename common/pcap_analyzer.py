@@ -92,6 +92,9 @@ def protocol_config(protocol: str) -> dict:
     return PROTOCOL_CONFIG[protocol]
 
 
+# mqtt-windowed is the same wire protocol as mqtt.
+PROTOCOL_CONFIG["mqtt-windowed"] = PROTOCOL_CONFIG["mqtt"]
+
 RETRANSMISSION_FILTER = (
     "tcp.analysis.retransmission or "
     "tcp.analysis.fast_retransmission or "

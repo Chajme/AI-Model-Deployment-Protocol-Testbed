@@ -457,6 +457,10 @@ CLIENT_HEADERS = {
 
 def duration_cell(schema, row, side, size):
     """Duration/goodput cells, with the single-chunk receiver guard."""
+    if AGGREGATE and schema in DEVICE_DELIVERY and side == "receiver":
+        # v2: device-side delivery (metadata arrival -> verified), defined
+        # for single-chunk files too.
+        return fmt(row.get("delivery_duration")), fmt(row.get("delivery_goodput_mbps"))
     if schema in ("mqtt", "amqp", "grpc") and side == "receiver" and is_single_chunk(size):
         return NA_SINGLE_CHUNK, NA_SINGLE_CHUNK
     if schema in ("mqtt", "amqp", "grpc"):
@@ -718,7 +722,9 @@ def build_footnotes_v2(commit):
   `n=` after the pcap duration is the number of captures aggregated;
   ⚠N counts captures left out because they dropped frames.
 - ¹ **{NA_TEXT}**: a file that fits in one 1 MB chunk spans no
-  measurable receiver-side arrival window.
+  measurable receiver-side arrival window. MQTT/AMQP **receiver** rows show
+  the device-side delivery time instead (metadata arrival → file verified),
+  which is defined for single-chunk files too.
 - ² see the second bullet.
 - **Shaping model** (docs/network-chaos.md, ISSUES.md FIXED-15): exactly one
   constrained link, between the device and its data source, shaped in both
@@ -816,6 +822,26 @@ LATENCY_FIELD = {
 }
 
 
+# Broker protocols: under the v2 shaping model the publisher is on the clean
+# server-side link, so the device-side delivery row is the transfer view.
+DEVICE_DELIVERY = ("mqtt", "amqp")
+DELIVERY_SIDE = {schema: "receiver" for schema in DEVICE_DELIVERY}
+
+
+def transfer_time_field():
+    if AGGREGATE:
+        return make_client_field({**TRANSFER_FIELD, "mqtt": "delivery_duration",
+                                  "amqp": "delivery_duration"}, side_override=DELIVERY_SIDE)
+    return make_client_field(TRANSFER_FIELD)
+
+
+def goodput_field():
+    if AGGREGATE:
+        return make_client_field({**uniform("goodput_mbps"), "mqtt": "delivery_goodput_mbps",
+                                  "amqp": "delivery_goodput_mbps"}, side_override=DELIVERY_SIDE)
+    return make_client_field(uniform("goodput_mbps"))
+
+
 def uniform(field):
     return {schema: field for schema in CLIENT_ROW_KEY}
 
@@ -879,7 +905,10 @@ def aggregate_cell(values, ok, attempts):
             return f"failed (0/{attempts})"
         return DASH
     q1, median, q3 = quartiles(numbers)
-    text = f"{fmt_num(median)} [{fmt_num(q1)}–{fmt_num(q3)}] n={len(numbers)}"
+    if len(numbers) == 1:
+        text = f"{fmt_num(median)} n=1"
+    else:
+        text = f"{fmt_num(median)} [{fmt_num(q1)}–{fmt_num(q3)}] n={len(numbers)}"
     if attempts:
         text += f" {100 * ok / attempts:.0f}%"
     if len(numbers) < MIN_N or (attempts and ok < attempts):
@@ -940,8 +969,8 @@ def render_headline_matrix(dataset, profiles, title, field_fn, legacy_fmt, size,
 def render_comparison_profile(dataset, profile, columns):
     lines = [f"## Profile: {profile}", ""]
     metric_tables = [
-        ("Transfer time (s)", make_client_field(TRANSFER_FIELD), cell_raw),
-        ("Client goodput (Mbps)", make_client_field(uniform("goodput_mbps")), cell_raw),
+        ("Transfer time (s)", transfer_time_field(), cell_raw),
+        ("Client goodput (Mbps)", goodput_field(), cell_raw),
         ("Control round trip (s) ³ — protocol-specific, not comparable across protocols",
          make_client_field(LATENCY_FIELD), cell_raw),
     ]
@@ -974,10 +1003,14 @@ def build_comparison_footnotes():
   without writing a row still counts as a failure. {FLAG} marks cells with
   n < {MIN_N} or a success rate below 100 %. `failed (0/N)` means every
   attempt failed.
-- Cells use the **sender-side** client measurements for MQTT/AMQP/gRPC,
-  the single client measurement for HTTP/CoAP, and the device-side download
-  view for HTTP GET and LwM2M. Success rates use the row that carries the
-  integrity verdict (MQTT/AMQP receiver, gRPC sender, others the client).
+- Transfer time and goodput are the **device-side** view wherever the
+  device receives the data: MQTT/AMQP use the receiver's delivery time
+  (metadata arrival → file verified; the publisher sits on the clean
+  server-side link, so its own time is not the constrained transfer), HTTP GET
+  and LwM2M the download. HTTP PUT, CoAP and gRPC are uploads over the single
+  shaped link and use the client measurement. The round-trip and CPU/RAM
+  tables use the sender/client rows. Success rates use the row that carries
+  the integrity verdict (MQTT/AMQP receiver, gRPC sender, others the client).
 - ³ **Round-trip definitions differ per protocol**: MQTT = metadata PUBACK;
   AMQP = publish confirm; HTTP = bare TCP connect; CoAP = discovery GET;
   gRPC = Ping RPC; LwM2M = registration. Not comparable across protocols;
@@ -1042,7 +1075,7 @@ def render_comparison_doc(dataset, protocols, profiles, commit):
         "",
     ]
 
-    goodput_field = make_client_field(uniform("goodput_mbps"))
+    headline_goodput = goodput_field()
     overhead_field = make_pcap_field("overhead_percentage")
 
     largest = max(SIZE_ORDER) if SIZE_ORDER else None
@@ -1050,11 +1083,11 @@ def render_comparison_doc(dataset, protocols, profiles, commit):
     if largest is not None:
         lines += render_headline_matrix(
             dataset, profiles, f"Headline: client goodput (Mbps) at {size_label(largest)}",
-            goodput_field, cell_raw, largest, columns)
+            headline_goodput, cell_raw, largest, columns)
     if smallest is not None and smallest != largest:
         lines += render_headline_matrix(
             dataset, profiles, f"Headline: client goodput (Mbps) at {size_label(smallest)}",
-            goodput_field, cell_raw, smallest, columns)
+            headline_goodput, cell_raw, smallest, columns)
     if largest is not None:
         lines += render_headline_matrix(
             dataset, profiles, f"Headline: wire overhead % at {size_label(largest)} (pcap)",

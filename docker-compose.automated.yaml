@@ -4,7 +4,7 @@ services:
 #  # MQTT
 #  # ========================
   mosquitto-broker:
-    profiles: ["mqtt"]
+    profiles: ["mqtt", "mqtt-windowed"]
     image: eclipse-mosquitto:2.1.2-alpine
     # No host port binding -- benchmark runs inside the internal mqtt-net.
     networks:
@@ -19,7 +19,7 @@ services:
   # device (client-b) link is constrained. It stays idle so the test harness
   # can drive one transfer at a time (per file / QoS) with per-run pcap capture.
   mqtt-client-a:
-    profiles: ["mqtt"]
+    profiles: ["mqtt", "mqtt-windowed"]
     build: ./
     cap_add:
       - NET_ADMIN
@@ -38,7 +38,7 @@ services:
 
   # Receiver = the edge device. Shapes its own egress (device -> broker).
   mqtt-client-b:
-    profiles: ["mqtt"]
+    profiles: ["mqtt", "mqtt-windowed"]
     build: ./
     cap_add:
       - NET_ADMIN
@@ -59,7 +59,7 @@ services:
   # the broker's egress towards client-b only (SHAPE_DST), i.e. the broker ->
   # device direction of the constrained link -- don't remove it.
   mqtt-capture:
-    profiles: ["mqtt"]
+    profiles: ["mqtt", "mqtt-windowed"]
     image: nicolaka/netshoot:v0.16
     depends_on:
       - mosquitto-broker
@@ -180,6 +180,9 @@ services:
     image: rabbitmq:3.13.7-alpine
     networks:
       - amqp-net
+    volumes:
+      # Slow-consumer settings for the shaped device link (send_timeout, heartbeat).
+      - ./protocols/AMQP/broker/rabbitmq.conf:/etc/rabbitmq/conf.d/20-testbed.conf:ro
 
   # Sender = server/CI side in a good network: not shaped (see mqtt-client-a).
   amqp-client-a:

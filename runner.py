@@ -35,6 +35,7 @@ BASE_ENV = os.environ.copy()
 # UDP protocols (CoAP/LwM2M) are handled with a fixed startup delay instead.
 PROBE = {
     "mqtt": ("mqtt-client-a", "mosquitto-broker", 1883),
+    "mqtt-windowed": ("mqtt-client-a", "mosquitto-broker", 1883),
     "http": ("http-client", "http-server", 8000),
     "http-get": ("http-client", "http-server", 8000),
     "amqp": ("amqp-client-a", "rabbitmq-broker", 5672),
