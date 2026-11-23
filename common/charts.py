@@ -7,7 +7,7 @@
     Chart style:
       - Line charts (protocol / MQTT-QoS as series, file size on the x axis,
         mean point + min-max band) for metrics that scale with file size.
-      - Grouped bar charts for size-invariant metrics (CPU / RAM / energy) and
+      - Grouped bar charts for size-invariant metrics (CPU / RAM) and
         for the combined overview dashboard.
       - --chart-type line|bar overrides the per-metric auto choice.
 
@@ -60,12 +60,14 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 import common.runs as runs
+from common.stats import quartiles
 
 
-PROTOCOLS = ["http", "mqtt", "coap", "amqp", "grpc", "lwm2m"]
+PROTOCOLS = ["http", "http-get", "mqtt", "coap", "amqp", "grpc", "lwm2m"]
 PROTO_ORDER = {p: i for i, p in enumerate(PROTOCOLS)}
 COLORS = {
     "http": "#1f77b4",
+    "http-get": "#17becf",
     "mqtt": "#ff7f0e",
     "coap": "#2ca02c",
     "amqp": "#d62728",
@@ -84,7 +86,7 @@ CLIENT_METRICS = {
         "title": "Goodput (client-measured)",
         "ylabel": "Mbps",
         "size_dependent": True,
-        "fields": {"http": "goodput_mbps", "coap": "goodput_mbps",
+        "fields": {"http-get": "goodput_mbps", "http": "goodput_mbps", "coap": "goodput_mbps",
                    "mqtt": "goodput_mbps", "amqp": "goodput_mbps",
                    "grpc": "goodput_mbps", "lwm2m": "goodput_mbps"},
     },
@@ -92,15 +94,18 @@ CLIENT_METRICS = {
         "title": "Transfer time",
         "ylabel": "seconds",
         "size_dependent": True,
-        "fields": {"http": "time_to_transfer", "coap": "time_to_transfer",
+        "fields": {"http-get": "time_to_transfer", "http": "time_to_transfer", "coap": "time_to_transfer",
                    "mqtt": "sender_duration", "amqp": "sender_duration",
                    "grpc": "sender_duration", "lwm2m": "download_duration"},
     },
     "latency": {
-        "title": "Latency",
+        # Each protocol's own control round trip (TCP connect, PUBACK, publish
+        # confirm, discovery GET, Ping RPC, registration): not comparable
+        # across protocols, see docs/charts.md.
+        "title": "Control round trip (protocol-specific)",
         "ylabel": "seconds",
         "size_dependent": True,
-        "fields": {"http": "latency_tcp_rtt", "coap": "latency",
+        "fields": {"http-get": "latency_tcp_rtt", "http": "latency_tcp_rtt", "coap": "latency",
                    "mqtt": "latency", "amqp": "latency",
                    "grpc": "latency", "lwm2m": "latency"},
     },
@@ -108,7 +113,7 @@ CLIENT_METRICS = {
         "title": "Avg CPU usage",
         "ylabel": "%",
         "size_dependent": False,
-        "fields": {"http": "avg_cpu_usage", "coap": "avg_cpu_usage",
+        "fields": {"http-get": "avg_cpu_usage", "http": "avg_cpu_usage", "coap": "avg_cpu_usage",
                    "mqtt": "avg_cpu_usage", "amqp": "avg_cpu_usage",
                    "grpc": "avg_cpu_usage", "lwm2m": "avg_cpu_usage"},
     },
@@ -116,17 +121,9 @@ CLIENT_METRICS = {
         "title": "Peak RAM",
         "ylabel": "MB",
         "size_dependent": False,
-        "fields": {"http": "peak_ram_usage", "coap": "peak_ram_usage",
+        "fields": {"http-get": "peak_ram_usage", "http": "peak_ram_usage", "coap": "peak_ram_usage",
                    "mqtt": "peak_ram_usage", "amqp": "peak_ram_usage",
                    "grpc": "peak_ram_usage", "lwm2m": "peak_ram_usage"},
-    },
-    "energy_j": {
-        "title": "Energy estimate",
-        "ylabel": "J",
-        "size_dependent": False,
-        "fields": {"http": "energy_est", "coap": "energy_est",
-                   "mqtt": "energy_est", "amqp": "energy_est",
-                   "grpc": "energy_est", "lwm2m": "energy_est"},
     },
 }
 
@@ -244,6 +241,9 @@ def _error_bounds(values, error):
         mean = sum(values) / len(values)
         sd = statistics.stdev(values) if len(values) > 1 else 0.0
         return (mean - sd, mean + sd)
+    if error == "iqr":
+        q1, _median, q3 = quartiles(values)
+        return (q1, q3)
     if error == "q90":
         ordered = sorted(values)
         lo = ordered[int(round(0.1 * (len(ordered) - 1)))]
@@ -500,7 +500,7 @@ def main():
     parser.add_argument("--metrics", nargs="+", default=None,
                         help="Metric names to plot (default: all). "
                              "Client: goodput_mbps, transfer_time, latency, avg_cpu_pct, "
-                             "peak_ram_mb, energy_j. Pcap: goodput_mbps, wire_throughput_mbps, "
+                             "peak_ram_mb. Pcap: goodput_mbps, wire_throughput_mbps, "
                              "overhead_percentage, total_overhead_bytes, total_wire_bytes, "
                              "retransmissions, total_packets.")
     parser.add_argument("--file-sizes", nargs="+", type=float, default=None,
@@ -519,7 +519,7 @@ def main():
                              "size-invariant ones (default).")
     parser.add_argument("--agg", choices=["mean", "median", "min", "max"], default="mean",
                         help="How to combine repeat runs (default: mean).")
-    parser.add_argument("--error", choices=["none", "minmax", "std", "q90"], default="minmax",
+    parser.add_argument("--error", choices=["none", "minmax", "std", "q90", "iqr"], default="minmax",
                         help="Error/band representation across runs (default: minmax).")
     parser.add_argument("--x-scale", choices=["auto", "linear", "log"], default="auto",
                         help="X axis scale (default: log for line charts).")

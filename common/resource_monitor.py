@@ -6,7 +6,10 @@ import os
 class ResourceMonitor:
     """
     Samples CPU % and RSS memory in a background thread.
-    Energy is estimated from average CPU load × system TDP.
+
+    (An energy estimate from CPU share x an assumed TDP was removed in v2: it
+    described the benchmark host, not an IoT device. Device energy is measured
+    only in the field test, on the real hardware.)
 
     Usage:
         monitor = ResourceMonitor(sample_interval=0.05)
@@ -21,10 +24,6 @@ class ResourceMonitor:
     rows with very few samples should be treated as low-confidence.
     stop() is idempotent — later calls return the same stats.
     """
-
-    # Conservative default TDP in watts — override with your actual CPU TDP.
-    # On Linux you can read: /sys/class/powercap/intel-rapl/intel-rapl:0/constraint_0_power_limit_uw
-    DEFAULT_TDP_WATTS = float(os.environ.get("CPU_TDP_WATTS", 15.0))
 
     # Minimum sampling window so short transfers still yield usable averages.
     MIN_WINDOW_SECONDS = 0.2
@@ -85,24 +84,13 @@ class ResourceMonitor:
         if self._thread:
             self._thread.join(timeout=2)
 
-        duration_s = self._end_time - self._start_time
-
         avg_cpu_pct  = sum(self._cpu_samples) / len(self._cpu_samples) if self._cpu_samples else 0.0
         avg_cpu_pct = avg_cpu_pct / (self.cpu_count or 1)
         peak_rss_mb  = max(self._rss_samples) / (1024 ** 2) if self._rss_samples else 0.0
 
-        # avg_cpu_pct is already normalised to a single core (0-100) above,
-        # so turn it straight into a 0-1 fraction of one core, then multiply
-        # by TDP and duration for a joule estimate. Dividing by the core count
-        # again here would under-report energy by ~num_cores.
-        # This is an approximation — RAPL (see Option 2) is more accurate.
-        cpu_fraction  = avg_cpu_pct / 100.0
-        energy_j      = cpu_fraction * self.DEFAULT_TDP_WATTS * duration_s
-
         self._stats = {
             "avg_cpu_pct":   round(avg_cpu_pct, 3),
             "peak_rss_mb":   round(peak_rss_mb, 3),
-            "energy_j":      round(energy_j, 6),
             "sample_count":  len(self._cpu_samples),
         }
         return self._stats

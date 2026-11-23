@@ -16,6 +16,7 @@ import argparse
 import itertools
 import json
 import os
+import random
 import subprocess
 import sys
 import time
@@ -170,7 +171,7 @@ def ensure_certs():
 
 
 def run_experiment(protocol, profile, run_id=None, files=None, qos_levels=None,
-                   tls=False, meta=None):
+                   tls=False, meta=None, repeat_index=None):
     print(f"\n=== Running {protocol.upper()} | {profile} ===")
 
     # Every experiment writes to its own immutable run directory
@@ -179,6 +180,8 @@ def run_experiment(protocol, profile, run_id=None, files=None, qos_levels=None,
     rid = run_id or runs.run_id_for(protocol, profile)
     if tls and not run_id:
         rid += "_tls"
+    if repeat_index is not None and not run_id:
+        rid += f"_r{repeat_index}"
 
     env = BASE_ENV.copy()
     env["COMPOSE_FILE"] = COMPOSE_FILE_AUTOMATED
@@ -281,6 +284,27 @@ def main():
              f"Only for: {', '.join(TLS_PORTS)}.",
     )
     parser.add_argument(
+        "--repeat",
+        type=int,
+        default=1,
+        help="Repeat every protocol x profile combination N times (n for the "
+             "median/IQR statistics; the thesis tables use 5).",
+    )
+    parser.add_argument(
+        "--sweep-id",
+        default=None,
+        help="Label shared by all runs of this sweep (recorded in run.json; "
+             "export_measurements.py --sweep-id aggregates them). Default with "
+             "--repeat > 1: sweep-<timestamp>.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Seed for shuffling the combination order per repetition "
+             "(default: random, recorded in run.json).",
+    )
+    parser.add_argument(
         "--run-id",
         default=None,
         help="Explicit run id instead of the auto-generated timestamp+protocol+profile one.",
@@ -307,17 +331,40 @@ def main():
     build_cmd += ["build"]
     subprocess.run(build_cmd, check=True)
 
+    if args.repeat < 1:
+        parser.error("--repeat must be >= 1")
+    if args.run_id and args.repeat > 1:
+        parser.error("--run-id cannot be combined with --repeat > 1")
+
+    combos = list(itertools.product(args.protocols, args.profiles))
+    sweep_id = args.sweep_id or (f"sweep-{runs.now_utc_stamp()}" if args.repeat > 1 else None)
+    seed = args.seed if args.seed is not None else random.randrange(2**31)
+    rng = random.Random(seed)
+    if sweep_id:
+        print(f"Sweep {sweep_id}: {len(combos)} combination(s) x {args.repeat} "
+              f"repetition(s), order seed {seed}")
+
     failures = []
-    for protocol, profile in itertools.product(args.protocols, args.profiles):
-        try:
-            run_experiment(protocol, profile, run_id=args.run_id,
-                           files=files, qos_levels=args.qos, tls=args.tls)
-        except Exception as e:
-            # One protocol/profile failing (e.g. a stack that won't come up)
-            # must not abort the rest of the sweep, otherwise a single bad
-            # combination hides the state of every remaining one.
-            failures.append((protocol, profile, e))
-            print(f"\n!!! {protocol.upper()} | {profile} FAILED: {e}")
+    for repeat_index in range(1, args.repeat + 1):
+        order = combos[:]
+        if args.repeat > 1:
+            # Shuffle per repetition so drift over time (host load, thermal
+            # state) doesn't systematically favour the protocols run first.
+            rng.shuffle(order)
+        for protocol, profile in order:
+            meta = ({"sweep_id": sweep_id, "repeat_index": repeat_index, "seed": seed}
+                    if sweep_id else {})
+            try:
+                run_experiment(protocol, profile, run_id=args.run_id,
+                               files=files, qos_levels=args.qos, tls=args.tls,
+                               meta=meta,
+                               repeat_index=repeat_index if sweep_id else None)
+            except Exception as e:
+                # One protocol/profile failing (e.g. a stack that won't come up)
+                # must not abort the rest of the sweep, otherwise a single bad
+                # combination hides the state of every remaining one.
+                failures.append((protocol, profile, e))
+                print(f"\n!!! {protocol.upper()} | {profile} FAILED: {e}")
 
     if failures:
         print("\n=== Sweep summary (failures) ===")

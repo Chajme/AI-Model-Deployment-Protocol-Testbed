@@ -119,6 +119,7 @@ def run_transfer(protocol: str, filename: str, qos: int | None = None, analyze: 
         # One failed transfer must not abort the rest of the sweep; the client
         # has already logged a failure row for this file.
         transfer_failed = True
+        exit_code = e.returncode
         print(f"  -> WARNING: transfer process exited with code {e.returncode}")
     finally:
         stop_capture_run(protocol, outfile, runs.pcap_dir())
@@ -126,6 +127,7 @@ def run_transfer(protocol: str, filename: str, qos: int | None = None, analyze: 
     print(f"  -> Capture stopped: {outfile}")
 
     if transfer_failed:
+        _log_transfer_failure(protocol, filename, qos, exit_code)
         return
 
     if not analyze:
@@ -149,6 +151,28 @@ def run_transfer(protocol: str, filename: str, qos: int | None = None, analyze: 
 
     print_result(result)
     write_to_file_pcap([result])
+
+
+def _log_transfer_failure(protocol: str, filename: str, qos, returncode) -> None:
+    """Append a harness-level failure record to <run>/transfer_failures.csv.
+
+    The export derives success rates from attempts (run.json) vs. verified
+    rows, so a crashed transfer is never silently dropped; this file records
+    why an attempt produced no row.
+    """
+    import csv
+
+    run_id = runs.active_run_id()
+    if not run_id:
+        return
+    path = os.path.join(runs.run_dir(os.environ.get("OUTPUT_DIR", "./output"), run_id),
+                        "transfer_failures.csv")
+    new = not os.path.isfile(path)
+    with open(path, "a", newline="", encoding="utf-8") as fh:
+        writer = csv.writer(fh)
+        if new:
+            writer.writerow(["protocol", "filename", "qos", "exit_code"])
+        writer.writerow([protocol, filename, "" if qos is None else qos, returncode])
 
 
 def run_protocol(protocol: str, files: list[str] | None = None, qos_levels: list[int] | None = None, analyze: bool = True) -> None:

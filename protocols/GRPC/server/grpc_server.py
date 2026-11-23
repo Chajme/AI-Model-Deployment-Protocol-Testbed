@@ -143,7 +143,6 @@ class FileTransferServicer(pb_grpc.FileTransferServicer):
                     "integrity_ok": integrity_ok,
                     "avg_cpu_usage": f"{resource_stats.get('avg_cpu_pct', 0):.2f}%",
                     "peak_ram_usage": f"{resource_stats.get('peak_rss_mb', 0):.2f} MB",
-                    "energy_est": f"{resource_stats.get('energy_j', 0):.4f}",
                     "sample_count": resource_stats.get("sample_count", ""),
                 }
             ]
