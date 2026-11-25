@@ -386,7 +386,7 @@ modem exists.
 | Profile | netem | tbf | Basis |
 |---|---|---|---|
 | `ltem` | `delay 75ms 25ms 25%`, `loss 0.5%` | `rate 300kbit burst 16kbit latency 1500ms` | Cat-M1 realistic throughput of about 300 kbit/s (3GPP TS 36.306, UE category M1); RTTs of about 100–200 ms on live networks |
-| `nbiot` | `delay 800ms 150ms 25%`, `loss 1%` | `rate 25kbit burst 4kbit latency 8000ms` | Cat-NB1 downlink peak of about 26 kbit/s (TS 36.306); 3GPP TR 45.820 latency target ≤ 10 s; field RTTs of about 1–2 s are commonly reported |
+| `nbiot` | `delay 800ms 150ms 25%`, `loss 1%` | `rate 25kbit burst 16kbit latency 8000ms` (burst must be ≥ one full frame) | Cat-NB1 downlink peak of about 26 kbit/s (TS 36.306); 3GPP TR 45.820 latency target ≤ 10 s; field RTTs of about 1–2 s are commonly reported |
 
 Notes:
 
@@ -658,3 +658,56 @@ Tick every box; each one names its evidence.
 
 **Effort:** about 5–7 days of code changes (Phases 0–7), plus one weekend of
 unattended runs (Phase 8). This fits December, before the January exam period.
+
+---
+
+## Implementation status (2026-11-23, branch `feat/protocol-analysis-v2`)
+
+Phases 0–7 are implemented and smoke-tested. Phase 8 (the full n = 5 matrix,
+about 15–25 h unattended) and Phase 9 (the thesis write-up) are still to do.
+Run the matrix with `python scripts/run_v2_matrix.py` (it prints its commands
+with `--dry-run`), then
+`python scripts/export_measurements.py --sweep-id v2-good v2-iot v2-mobile v2-harsh v2-ltem v2-nbiot`.
+
+### Definition of done — current state
+
+| Item | State | Evidence |
+|---|---|---|
+| Legacy tag, pinned dependencies/images, provenance in run.json | Done (tag `analysis-v1-legacy` is local, not pushed) | any new `run.json` (`git_commit`, `images`, `pip_freeze`) |
+| OPEN-5 fixed, legacy runs moved, broker shaped towards `client-b`, publishers unshaped | Done | `output/evidence/shaping-check.txt`, `output/evidence/broker-delivery-check.txt`, ISSUES.md FIXED-15 |
+| `--sizes`, export accepts fewer sizes, 3-decimal durations | Done | `tests/test_export.py`, `tests/test_runner_sizes.py` |
+| `http-get` results for every matrix profile | Code done; good, ltem, nbiot smoke-tested; full matrix pending (Phase 8) | `output/evidence/smoke-comparison.md` |
+| `206 100` check and resume test | Done | `output/evidence/http-get-checks.txt` |
+| TLS rows for http-get and mqtt on good, ltem, nbiot | Code done; good tested; ltem/nbiot pending (Phase 8) | `output/evidence/tls-checks.txt` |
+| 0 plaintext frames in TLS runs | Done | `output/evidence/tls-checks.txt` |
+| `ltem`/`nbiot` profiles documented with sources | Done; **sources still need your check** | `docs/network-chaos.md` |
+| Ping and goodput calibration | Done | `output/evidence/cellular-calibration.txt` |
+| Every main-table cell median [IQR], n ≥ 5, success % | Report done (n = 3 smoke sweep verified); n = 5 needs Phase 8 | `output/evidence/smoke-comparison.md` |
+| `pytest tests/` passes | Done (25 tests) | `python -m pytest tests` |
+| Energy removed; latency columns renamed; device-leg overhead | Done | `output/evidence/export-legacy-check.txt` (legacy numbers unchanged), `broker-delivery-check.txt` (~11 % overhead) |
+| Limitations in `docs/measurement-pipeline.md` | Done; thesis chapter is yours | `docs/measurement-pipeline.md` §5 |
+| Reports from v2 sweeps only, conclusion re-checked, `analysis-v2` tag | Pending (Phases 8–9) | — |
+| Cellular source check | Pending (yours) | — |
+
+### Deviations from the plan
+
+- **HTTP server:** gunicorn serves both the plain and the TLS variant (the plan
+  said waitress for plain). The two variants then differ only in TLS.
+- **Certificate check:** the strict Python `ssl` verification from
+  `http-client` replaces `openssl s_client` (the client image has no openssl
+  CLI). It applies Python 3.13's strict X.509 rules, which is stricter.
+- **Legacy separation:** runs moved to `output/runs-legacy-v1/` (Step 1.5).
+  `shaping_model: access-link-bidir-v2` is still recorded in each new run.json.
+- **MQTT/AMQP transfer view (new).** The publisher sits on the clean link, so
+  its own time (~0.06 s for 5 MB) is not the constrained transfer. The harness
+  now waits for the device's verified row, and the v2 report uses the
+  receiver's delivery time (metadata arrival → verified) for MQTT/AMQP.
+- **RabbitMQ settings (new):** `send_timeout` and `heartbeat` raised to 600 s.
+  RabbitMQ otherwise resets a slow consumer on the shaped device link.
+- **`nbiot` tbf burst:** 16kbit instead of 4kbit. 4kbit (512 B) is smaller than
+  one frame, so every full-size segment was dropped.
+- **MQTT TLS handshake:** also recorded on the device side (`client-b`, once per
+  connection), because the publisher's handshake is on the clean link.
+- **Optional `mqtt-windowed`:** implemented. Smoke result on iot: same delivery
+  goodput as plain MQTT (0.480 vs 0.473 Mbit/s). Under the v2 model the
+  device link, not the client's per-chunk wait, limits MQTT.

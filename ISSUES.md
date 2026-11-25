@@ -7,6 +7,12 @@ entries (`output/runs/20260825T183032_mqtt/`) predates the run-directory
 history of the current checkout and is no longer present; later evidence
 references runs that do exist.
 
+> **Legacy boundary (tag `analysis-v1-legacy`).** Every run produced up to that
+> tag used the legacy shaping, in which the MQTT/AMQP device link
+> (broker → `client-b`) was not shaped (see FIXED-15). Those runs live in
+> `output/runs-legacy-v1/` and must never be mixed with v2 runs in one table.
+> The v2 changes are tracked in `docs/protocol-analysis-completion-plan.md`.
+
 ---
 
 ## OPEN-4: LwM2M large-file sweeps are RTT-bound and extremely slow
@@ -26,43 +32,51 @@ would change the wire profile and should be a deliberate choice).
 
 ---
 
-## OPEN-5: the six protocols run under two different network scenarios
+## FIXED-15 (was OPEN-5): MQTT/AMQP device link carried the data unshaped
 
-**Severity:** high for cross-protocol chaos comparisons · **Affects:**
-MQTT/AMQP vs HTTP/CoAP/gRPC/LwM2M under any chaos profile
-**Status:** OPEN (design decided, implementation deferred)
+**Severity:** high for cross-protocol chaos comparisons · **Affects:** every
+legacy MQTT/AMQP run under a chaos profile · **Status:** FIXED (Nov 2026,
+branch `feat/protocol-analysis-v2`)
 
-`tc` runs on all clients and on the http/coap/grpc/lwm2m servers, but the
-brokers are stock images (`eclipse-mosquitto`, `rabbitmq`) and are never
-shaped. Consequences:
+**Problem.** `tc` ran on every client and on the http/coap/grpc/lwm2m servers,
+but the brokers are stock images and were never shaped. For MQTT/AMQP the data
+path is publisher (`client-a`) → broker → device (`client-b`):
 
-- **MQTT/AMQP** face one constrained link (the sender's egress). The
-  broker→receiver delivery leg is clean, and the sender's PUBACK/confirm
-  return path is clean too (it leaves the unshaped broker).
-- **HTTP/CoAP/gRPC/LwM2M** face shaping on both ends, so their ACK/response
-  path is also delayed and lossy — effectively double the delay/loss exposure
-  per round trip compared to the broker protocols.
+- the shaped direction was `client-a` → broker, i.e. the *server/backend* hop;
+- the device link broker → `client-b` carried the data **unshaped**; only
+  `client-b`'s acknowledgements towards the broker were shaped.
 
-Evidence: under `harsh` (256 Kbit cap) the MQTT sender pushed 250 KB at
+Evidence: under `harsh` (256 kbit cap) the MQTT sender pushed 250 KB at
 0.101 Mbps while the receiver recorded the same bytes at 1724 Mbps
 (`20260901T175347_mqtt_harsh`) — only possible on an unshaped delivery leg.
-So a "same profile name" means a harsher network for the direct protocols
-than for the broker protocols, and cross-protocol absolute numbers under
-chaos conflate protocol efficiency with scenario difference.
 
-**Agreed target design (deferred, "single constrained link" model):** the
-edge device's access link is the only constrained link; the backend sits in
-a good network. Concretely: unshape `mqtt-client-b`, `amqp-client-b`,
-`http-server`, `coap-server`, `grpc-server`; keep `tc` on all senders
-(clients) and on `lwm2m-server` (it is the data source of a download —
-unshaping it would leave the transfer unconstrained, since only egress can
-be shaped). Known limitation to document: for upload protocols the
-constrained link is modeled in the data direction only; the return direction
-would need per-destination `tc` filters on the broker/server side.
+**Model now used ("bidirectional access link").** Exactly one constrained link,
+between the edge device and the endpoint it gets the data from, constrained in
+both directions; every other link is clean. Netem shapes egress only, so both
+endpoints of that link shape their own egress with the same profile (values
+are per direction, RTT ≈ 2 × delay).
 
-**Impact when implemented:** http/coap/grpc chaos numbers will get faster
-(clean ACK path); all pre-change http/coap/grpc chaos CSVs are a *harsher
-legacy scenario* and must not be mixed with post-change results in one chart.
+- HTTP/CoAP/gRPC/LwM2M already matched this model (one link, both ends
+  shaped) and are unchanged.
+- MQTT/AMQP: `client-b` shapes its egress (device → broker, as before); the
+  capture sidecar, which shares the broker's network namespace, shapes the
+  broker's egress **towards `client-b` only** (`SHAPE_DST`, prio + u32 filter
+  in `scripts/network_chaos.sh`); `client-a` runs `NETWORK_PROFILE=none`.
+- The MQTT/AMQP sidecars capture only the device leg (`host <client-b>` BPF
+  filter, `common/packet_capture.py`), so overhead is per leg (the old
+  two-leg capture reported ~115 %).
+
+**Dropped design.** The earlier "agreed design" (unshape the servers, shape
+only senders) was not implemented: it would have reduced the correct
+direct-protocol shaping to one direction and still shaped the wrong MQTT hop.
+
+**Verification.** `output/evidence/shaping-check.txt` (profile `good`, 40 ms per
+direction): broker → `client-b` ≈ 76–80 ms RTT, broker → `client-a` < 0.1 ms,
+the same for AMQP, and HTTP server → client ≈ 83 ms.
+
+**Impact.** Legacy MQTT/AMQP chaos results are invalid under the new model.
+All pre-fix runs were moved to `output/runs-legacy-v1/` (tag
+`analysis-v1-legacy`) and must not be mixed with v2 runs.
 
 ---
 
@@ -186,8 +200,8 @@ services but not to `http-server`/`coap-server`; `scripts/network_chaos.sh`
 then defaulted to the `iot` profile regardless of the sweep profile chosen.
 The fix (adding `- NETWORK_PROFILE=${NETWORK_PROFILE}` to both services)
 was applied in the compose file before this audit; the entry is retained
-here because the item had been left marked OPEN after the fix. See OPEN-5
-for the scenario asymmetry that remains.
+here because the item had been left marked OPEN after the fix. The scenario asymmetry noted
+at the time is fixed in FIXED-15 (was OPEN-5).
 
 ## FIXED-12: MQTT/AMQP sender duration included the metadata-ACK wait
 
@@ -210,7 +224,7 @@ rows do not.
 For a file that fits in one 1 MB chunk, the receiver window "first chunk
 arrival → last chunk arrival" is empty, producing `receiver_duration ≈ 0.00`
 and four-digit fake goodput (e.g. 1724 Mbps under a 256 Kbit profile — see
-the OPEN-5 evidence). Fixed (Nov 2026): MQTT/AMQP receivers now record
+the FIXED-15 (was OPEN-5) evidence). Fixed (Nov 2026): MQTT/AMQP receivers now record
 `X` (not applicable) for `receiver_duration`/`goodput_mbps` on single-chunk
 transfers; the first-chunk lag, integrity, CPU/RAM/energy and the sender
 rows remain meaningful.

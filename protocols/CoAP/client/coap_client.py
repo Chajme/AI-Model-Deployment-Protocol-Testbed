@@ -12,7 +12,10 @@ from output.write_csv import write_to_file_coap
 
 DATA_DIR   = "/app/data"
 SERVER_URI = "coap://coap-server/upload"
-MAX_RETRIES = 3
+# A retry resends the WHOLE file. On NB-IoT one attempt already takes minutes,
+# so only one retry is allowed there; failures are recorded, not hidden.
+MAX_RETRIES = int(os.getenv("COAP_MAX_RETRIES",
+                            "1" if os.getenv("NETWORK_PROFILE") == "nbiot" else "3"))
 
 
 async def get_latency(context: Context, uri: str) -> float:
@@ -95,13 +98,12 @@ async def transfer_file(context: Context, filename: str) -> None:
     write_to_file_coap([{
         "protocol":        "coap",
         "file_size":       file_size_mb,
-        "time_to_transfer": f"{transfer_time:.2f}",
+        "time_to_transfer": f"{transfer_time:.3f}",
         "latency":         f"{latency:.4f}",
         "goodput_mbps":    f"{goodput_mbps:.3f}",
         "integrity_ok":    integrity_ok,
         "avg_cpu_usage":   f"{resource_stats['avg_cpu_pct']:.2f}%",
         "peak_ram_usage":  f"{resource_stats['peak_rss_mb']:.2f} MB",
-        "energy_est":      f"{resource_stats['energy_j']:.4f}",
         "sample_count":    resource_stats["sample_count"],
     }])
 

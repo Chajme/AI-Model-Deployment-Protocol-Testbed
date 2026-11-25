@@ -1,0 +1,2 @@
+# Host-side test dependencies (not installed in the containers).
+pytest==9.2.0

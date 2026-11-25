@@ -29,7 +29,7 @@ Each protocol gets its own bridge network with three roles:
 | `mosquitto-broker` | `eclipse-mosquitto:latest` | `mqtt-net` | broker | `listener 1883`, `allow_anonymous true` |
 | `mqtt-capture` | `nicolaka/netshoot` | `network_mode: service:mosquitto-broker` | `sleep infinity` | tcpdump lives here |
 | `http-client` | app (built) | `http-net` | `sleep infinity` / `network_chaos.sh` | PUT uploader |
-| `http-server` | app (built) | `http-net` | `flask_server` / `network_chaos.sh` | Flask upload API |
+| `http-server` | app (built) | `http-net` | `flask_server` (gunicorn) / `network_chaos.sh` | HTTP upload (`PUT`) and download (`GET`, Range) API |
 | `http-capture` | `nicolaka/netshoot` | `network_mode: service:http-server` | `sleep infinity` | tcpdump lives here |
 | `coap-client` | app (built) | `coap-net` | `sleep infinity` / `network_chaos.sh` | blockwise PUT uploader |
 | `coap-server` | app (built) | `coap-net` | `coap_server` / `network_chaos.sh` | aiocoap resource |
@@ -162,5 +162,5 @@ removes **named volumes only** — CSVs and pcaps survive.
 | Capture orchestration (start/stop/copy) | host — `common/packet_capture.py` via `docker compose exec` |
 | pcap analysis | host — `common/pcap_analyzer.py`; host `tshark`, or containerized `tshark` from `netshoot` when absent |
 | CSV writing | client containers for runtime metrics; host harness for pcap metrics |
-| Resource sampling (CPU/RAM/energy) | inside the client process — `common/resource_monitor.py` |
+| Resource sampling (CPU/RAM) | inside the client process — `common/resource_monitor.py` |
 | Chart generation | host — `common/charts.py` (matplotlib) |

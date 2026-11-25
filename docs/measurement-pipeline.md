@@ -114,6 +114,17 @@ measures runtime metrics, and appends its own row to
 `RUN_ID` env var, or from the `.active_run` marker written by the host into the
 output bind mount.
 
+**Broker protocols (MQTT, `mqtt-windowed`, AMQP).** The sender only hands the
+file to the broker over the clean server-side link; delivery to the device
+(`client-b`) over the constrained link continues after the sender exits. The
+harness therefore keeps the capture and the stack up until the receiver has
+written its verified row (`_wait_for_receiver` in
+`protocols/benchmark_manager.py`; timeout `120 s + size × 8 / RECEIVER_MIN_BPS`,
+default 16 kbit/s). It aborts early if the receiver container stops, and records
+`receiver-timeout` in `transfer_failures.csv` when the row never arrives. The
+receiver row carries `delivery_duration` (metadata arrival → file verified) and
+`delivery_goodput_mbps`, which the v2 report uses as the MQTT/AMQP transfer view.
+
 ### 2c. `stop_capture_run(protocol, container_pcap_path, host_pcap_dir)`
 
 1. **Settle** — waits `CAPTURE_SETTLE_SECONDS = 2.0` so the transfer tail
@@ -190,6 +201,35 @@ All 16 pcap columns plus the client-side schemas are documented in
 Client-side timing uses `time.perf_counter()` inside the container and is
 **not** the same clock domain as tshark — treat the two durations as
 complementary, not interchangeable.
+
+### Primary vs. secondary metrics
+
+The cross-protocol comparison rests on **transfer time, goodput, wire bytes /
+overhead and success rate** (plus TTFB and TLS handshake time for downloads).
+The per-protocol "latency" columns time different things (TCP connect, PUBACK,
+publish confirm, discovery GET, Ping RPC, registration) and are not comparable
+across protocols. CPU and RAM are host-side process metrics. The former energy
+estimate was removed (it described the host, not a device).
+
+### Known limitations (state them in the thesis)
+
+- **aiocoap** sends one block at a time (NSTART = 1), uses 1 KB blocks (the
+  CoAP maximum) and loads the whole file into RAM
+  (`protocols/CoAP/client/coap_client.py`); a CoAP retry resends the whole file.
+  Part of CoAP's slowness is this implementation, not the protocol.
+- **paho-mqtt** in the default `mqtt` key waits for each 1 MB chunk's
+  acknowledgement before sending the next one (an in-flight window of 1). The
+  `mqtt-windowed` key keeps 20 chunks in flight to show how much of MQTT's
+  throughput plateau comes from this client.
+- **AMQP** confirms each publish synchronously (no pipelined confirms).
+- **LwM2M** is a hand-written emulator of the firmware-update flow over
+  aiocoap, without DTLS — not a full LwM2M stack.
+- **Shaping**: one constrained access link per protocol, shaped in both
+  directions with the same profile values (no uplink/downlink asymmetry);
+  netem jitter is kept moderate because large jitter reorders packets.
+- **Cellular profiles** (`ltem`, `nbiot`) are literature-based starting values;
+  they must be recalibrated on the field SIM.
+- **TLS** is implemented for `http`, `http-get` and `mqtt` only.
 
 ---
 

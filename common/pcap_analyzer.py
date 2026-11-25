@@ -26,6 +26,14 @@ PROTOCOL_CONFIG = {
         "type_fields": ["http.request.method", "http.response.code"],
         "is_tcp": True,
     },
+    # Device download: the response body travels as plain TCP data segments
+    # from the server port, so the window uses the same rule as the PUT.
+    "http-get": {
+        "filter": "http",
+        "duration_filter": "http or (tcp.len > 0 and tcp.port == 8000)",
+        "type_fields": ["http.request.method", "http.response.code"],
+        "is_tcp": True,
+    },
     "coap": {
         "filter": "coap",
         "type_fields": ["coap.code"],
@@ -52,6 +60,41 @@ PROTOCOL_CONFIG = {
     },
 }
 
+# TLS variant (runner.py --tls sets TLS=1 in the harness environment): the
+# payload protocol is encrypted, so the protocol filters above match nothing.
+# Frames are selected by port instead, and the frame-type breakdown is empty.
+TLS_PROTOCOL_CONFIG = {
+    "mqtt": {
+        "filter": "tcp.port == 8883",
+        "duration_filter": "tcp.len > 0 and tcp.port == 8883",
+        "type_fields": [],
+        "is_tcp": True,
+    },
+    "http": {
+        "filter": "tcp.port == 8443",
+        "duration_filter": "tcp.len > 0 and tcp.port == 8443",
+        "type_fields": [],
+        "is_tcp": True,
+    },
+    "http-get": {
+        "filter": "tcp.port == 8443",
+        "duration_filter": "tcp.len > 0 and tcp.port == 8443",
+        "type_fields": [],
+        "is_tcp": True,
+    },
+}
+
+
+def protocol_config(protocol: str) -> dict:
+    """Analysis config for a protocol, switched to the TLS variant when TLS=1."""
+    if os.getenv("TLS", "0") == "1" and protocol in TLS_PROTOCOL_CONFIG:
+        return TLS_PROTOCOL_CONFIG[protocol]
+    return PROTOCOL_CONFIG[protocol]
+
+
+# mqtt-windowed is the same wire protocol as mqtt.
+PROTOCOL_CONFIG["mqtt-windowed"] = PROTOCOL_CONFIG["mqtt"]
+
 RETRANSMISSION_FILTER = (
     "tcp.analysis.retransmission or "
     "tcp.analysis.fast_retransmission or "
@@ -63,7 +106,7 @@ RETRANSMISSION_FILTER = (
 # analysis can run inside a throwaway container when no host tshark is
 # installed (the common case on Windows). Override with TSHARK_CONTAINER_IMAGE
 # if a different image/tag is preferred.
-TSHARK_CONTAINER_IMAGE = os.getenv("TSHARK_CONTAINER_IMAGE", "nicolaka/netshoot")
+TSHARK_CONTAINER_IMAGE = os.getenv("TSHARK_CONTAINER_IMAGE", "nicolaka/netshoot:v0.16")
 
 _HOST_TSHARK_CANDIDATES = [
     r"C:\Program Files\Wireshark\tshark.exe",
@@ -165,11 +208,13 @@ def _validate_protocol(protocol: str) -> dict:
         raise ValueError(
             f"Unknown protocol {protocol!r}. Supported: {list(PROTOCOL_CONFIG)}"
         )
-    return PROTOCOL_CONFIG[protocol]
+    return protocol_config(protocol)
 
 
 def _parse_frame_type(line: str, type_fields: list[str]) -> str:
     """Build the frame-type label from the first non-empty type field."""
+    if not type_fields:
+        return "ENCRYPTED"        # TLS variant: payload protocol not visible
     parts = list(csv.reader([line]))[0]
     for field_idx, _ in enumerate(type_fields):
         # type_fields are requested after frame.number / frame.len

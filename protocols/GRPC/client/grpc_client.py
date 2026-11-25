@@ -43,7 +43,9 @@ CHUNK_SIZE = 1024 * 1024
 # conservative throughput floor (~256 kbit/s, the harsh profile's TBF egress).
 # Both values can be overridden from the environment.
 GRPC_BASE_TIMEOUT_S = float(os.getenv("GRPC_BASE_TIMEOUT_S", "120"))
-GRPC_MIN_THROUGHPUT_BPS = int(os.getenv("GRPC_MIN_THROUGHPUT_BPS", "32000"))
+# NB-IoT (~25 kbit/s) is slower than that floor, so it gets a lower default.
+_DEFAULT_MIN_BPS = "16000" if os.getenv("NETWORK_PROFILE") == "nbiot" else "32000"
+GRPC_MIN_THROUGHPUT_BPS = int(os.getenv("GRPC_MIN_THROUGHPUT_BPS", _DEFAULT_MIN_BPS))
 
 
 def measure_latency(channel):
@@ -104,7 +106,7 @@ def send_file(filename):
     try:
         result = stub.Upload(chunk_iterator(), timeout=deadline_s)
         integrity_ok = result.integrity_ok
-        receiver_duration_field = f"{result.receiver_duration_s:.2f}"
+        receiver_duration_field = f"{result.receiver_duration_s:.3f}"
     except grpc.RpcError as e:
         rpc_error = f"{e.code().name}: {e.details()}"
         print(f"  -> gRPC transfer failed: {rpc_error}")
@@ -119,14 +121,13 @@ def send_file(filename):
             "protocol": "grpc",
             "side": "sender",
             "file_size": file_size / (1024 * 1024),
-            "sender_duration": f"{duration:.2f}",
+            "sender_duration": f"{duration:.3f}",
             "receiver_duration": receiver_duration_field,
             "latency": f"{latency:.4f}",
             "goodput_mbps": f"{goodput_mbps:.3f}",
             "integrity_ok": integrity_ok,
             "avg_cpu_usage": f"{resource_stats['avg_cpu_pct']:.2f}%",
             "peak_ram_usage": f"{resource_stats['peak_rss_mb']:.2f} MB",
-            "energy_est": f"{resource_stats['energy_j']:.4f}",
             "sample_count": resource_stats["sample_count"],
         }
     ]

@@ -148,11 +148,17 @@ By design: MQTT publishes **1 MiB chunks one at a time**, each with a blocking
 `wait_for_publish(timeout=60)` (protocols/MQTT/clients/client_a.py). Under
 latency, this serializes at ~one RTT per chunk.
 
-### Energy estimates look tiny / large
+### Where did the energy column go?
 
-`energy_j = CPU fraction × TDP × duration` (common/resource_monitor.py) with
-TDP from `CPU_TDP_WATTS` (default 15 W). It is an approximation — set
-`CPU_TDP_WATTS` to your actual CPU TDP for closer numbers, or use RAPL.
+The CPU-share × 15 W TDP estimate was removed in v2: it described the benchmark
+host, not an IoT device. Legacy CSVs still contain `energy_est`; the export no
+longer reports it. Device energy is measured in the field test.
+
+### TLS run fails with CERTIFICATE_VERIFY_FAILED
+
+Python 3.13 verifies certificates strictly. Delete `certs/` and let
+`runner.py --tls` regenerate it with `scripts/gen_certs.sh`, which sets the
+`basicConstraints`/`keyUsage` extensions the strict check requires.
 
 ### Client and pcap durations disagree
 

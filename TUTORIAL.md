@@ -159,7 +159,7 @@ Files written:
 
 | Path | Producer | Content |
 |---|---|---|
-| `output/runs/<run_id>/<proto>_measurements.csv` | client container | runtime metrics (transfer time, RTT/TTFB, goodput, CPU/RAM, energy, integrity) |
+| `output/runs/<run_id>/<proto>_measurements.csv` | client container | runtime metrics (transfer time, RTT/TTFB, goodput, CPU/RAM, integrity) |
 | `output/runs/<run_id>/pcap_measurements.csv` | host harness | tshark analysis (packet counts, overhead, goodput, retransmissions, packet types) |
 | `output/runs/<run_id>/pcap/<proto>_<file>.pcap` | capture sidecar | raw capture, one file per transfer |
 | `output/runs/<run_id>/run.json` | harness | manifest (protocol, profile, files, tool versions) |
@@ -194,9 +194,11 @@ drive every transfer → `docker compose down -v`.
 .venv\Scripts\python runner.py --profiles good iot harsh mobile satellite
 ```
 
-Network profiles (`scripts/network_chaos.sh`), applied on the `eth0` of every
-client and of the http/coap/grpc/lwm2m servers (brokers are stock images and
-stay clean):
+Network profiles (`scripts/network_chaos.sh`). Each protocol has one
+constrained link, between the device and its data source, shaped in both
+directions: both ends of HTTP/CoAP/gRPC/LwM2M, and for MQTT/AMQP the device
+(`client-b`) plus the broker's traffic towards it (the publisher is unshaped).
+Delays are per direction, so the RTT is about 2 × delay:
 
 | Profile | Delay | Loss | Rate | Models |
 |---|---|---|---|---|
@@ -205,6 +207,8 @@ stay clean):
 | `harsh` | 300ms | gemodel | 256 Kbit | industrial edge |
 | `mobile` | 150ms± | 3% | 1 Mbit | unstable cellular |
 | `satellite` | 600ms | 0.5% | 1 Mbit | GEO satellite |
+| `ltem` | 75ms | 0.5% | 300 Kbit | LTE-M (Cat-M1) |
+| `nbiot` | 800ms | 1% | 25 Kbit | NB-IoT (Cat-NB1) |
 
 Because tc is applied inside the containers, each run is reproducible across hosts —
 no real network needed.
@@ -219,6 +223,18 @@ output/runs/20260818T201455_http_good/
 
 > `docker compose down -v` in `runner.py` removes **named volumes** only. Your
 > `output/` is a **bind mount**, so runs survive.
+
+### Repeated sweeps for the thesis tables (v2)
+
+```bash
+.venv\Scripts\python runner.py --protocols http http-get mqtt grpc amqp --profiles iot --sizes 250kb,1mb,5mb --qos 1 --repeat 5 --sweep-id v2-iot
+.venv\Scripts\python runner.py --protocols http-get mqtt --profiles iot --sizes 250kb,1mb,5mb --qos 1 --tls --repeat 5 --sweep-id v2-iot
+.venv\Scripts\python scripts\export_measurements.py --sweep-id v2-iot
+```
+
+`--sizes` keeps slow profiles short, `--repeat 5` gives n = 5 per cell, and the
+export shows `median [Q1–Q3] n=N S%` per cell. The full re-run matrix and the
+acceptance checklist are in `docs/protocol-analysis-completion-plan.md`.
 
 ---
 
@@ -244,7 +260,7 @@ python common/charts.py                   # legacy: reads ./output flat files
   the x axis (log scale by default, since sizes span 0.25→50 MB), one line per
   protocol; MQTT QoS 1/2 are dashed/dotted lines on the same protocol color.
   Repeat runs are aggregated (mean by default) with a shaded min–max band.
-- **Grouped bar charts** — for size-invariant metrics (CPU, RAM, energy) and for
+- **Grouped bar charts** — for size-invariant metrics (CPU, RAM) and for
   the combined `overview.png` dashboard. Protocols are the bar groups; QoS is
   distinguished by hatching.
 
@@ -289,9 +305,9 @@ python common/charts.py --run <run_id> --file-sizes 1 5 20 50 --qos 2
 python common/charts.py --run <run_id> --chart-type bar --error none
 ```
 
-What it produces (14 PNGs by default): `client_goodput_mbps`,
+What it produces (13 PNGs by default): `client_goodput_mbps`,
 `client_transfer_time`, `client_latency`, `client_avg_cpu_pct`,
-`client_peak_ram_mb`, `client_energy_j` from the client-runtime CSVs (MQTT uses
+`client_peak_ram_mb` from the client-runtime CSVs (MQTT uses
 its sender rows), `pcap_goodput_mbps`, `pcap_wire_throughput_mbps`,
 `pcap_overhead_percentage`, `pcap_total_overhead_bytes`, `pcap_total_wire_bytes`,
 `pcap_retransmissions`, `pcap_total_packets` from `pcap_measurements.csv`, and

@@ -1,0 +1,14 @@
+# Export regression check (Phase 7), 2026-11-23T12:48:26+01:00
+
+Old export (scripts/export_measurements.py at 48319ee) vs. the rewritten export,
+both run on output/runs-legacy-v1 with
+  --protocols mqtt http coap amqp grpc lwm2m --profiles good iot harsh mobile satellite
+
+After removing the "Energy J" column / "Energy (J)" table from the old output and
+ignoring header rows (latency columns were renamed, "HTTP" -> "HTTP PUT"):
+
+  detail document:     456 table rows old, 456 new, identical: True
+  comparison document: 228 table rows old, 228 new, identical: True
+
+So the rewrite reproduces every legacy number; only labels and the removed
+energy metric changed.

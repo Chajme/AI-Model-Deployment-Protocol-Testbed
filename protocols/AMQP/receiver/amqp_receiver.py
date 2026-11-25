@@ -57,7 +57,13 @@ def connect_with_retries(attempts=15, delay=2) -> BlockingConnection:
 def _transfer_completed_handler():
     global current_filename, received_bytes, expected_checksum, start_latency, transfer_start_time, monitor
 
-    transfer_duration = time.perf_counter() - transfer_start_time
+    completed_at = time.perf_counter()
+    transfer_duration = completed_at - transfer_start_time
+    # Device-side delivery time: metadata arrival -> last chunk verified.
+    # Defined for single-chunk files too. Under the v2 shaping model the
+    # publisher sits in a clean network, so this -- not the sender's time --
+    # is the transfer time over the constrained link.
+    delivery_duration = completed_at - metadata_arrival_time
     file_size_mb = received_bytes / (1024 * 1024)
 
     resource_stats = monitor.stop() if monitor else {}
@@ -94,13 +100,15 @@ def _transfer_completed_handler():
             "side": "receiver",
             "file_size": file_size_mb,
             "sender_duration": "X",
-            "receiver_duration": "X" if single_chunk else f"{transfer_duration:.2f}",
+            "receiver_duration": "X" if single_chunk else f"{transfer_duration:.3f}",
             "latency": f"{start_latency:.4f}",
             "goodput_mbps": "X" if single_chunk else f"{goodput_mbps:.3f}",
+            "delivery_duration": f"{delivery_duration:.3f}",
+            "delivery_goodput_mbps": f"{(received_bytes * 8) / (delivery_duration * 1_000_000):.3f}"
+                                     if delivery_duration > 0 else "X",
             "integrity_ok": integrity_ok,
             "avg_cpu_usage": f"{resource_stats.get('avg_cpu_pct', 0):.2f}%",
             "peak_ram_usage": f"{resource_stats.get('peak_rss_mb', 0):.2f} MB",
-            "energy_est": f"{resource_stats.get('energy_j', 0):.4f}",
             "sample_count": resource_stats.get("sample_count", ""),
         }
     ]

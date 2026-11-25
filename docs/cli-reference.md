@@ -41,25 +41,69 @@ Behavior notes:
 ## 2. `runner.py` — automated protocol × profile sweep
 
 ```bash
-python runner.py [--protocols mqtt http coap amqp grpc lwm2m]
-                 [--profiles good iot harsh mobile satellite]
+python runner.py [--protocols mqtt mqtt-windowed http http-get coap amqp grpc lwm2m]
+                 [--profiles good iot harsh mobile satellite ltem nbiot]
+                 [--sizes 250kb,1mb,5mb] [--qos 1] [--tls]
+                 [--repeat 5] [--sweep-id NAME] [--seed N] [--run-id ID]
 ```
 
 | Flag | Type | Default | Effect |
 |---|---|---|---|
-| `--protocols` | nargs+ (choices `http mqtt coap amqp grpc lwm2m`) | all | protocols to sweep |
-| `--profiles` | nargs+ (choices from `network_chaos.sh`) | `[mobile]` | profiles to run |
-| `--run-id` | str | auto | explicit run id (must not already exist) |
+| `--protocols` | nargs+ (choices = `RUNNERS` keys) | all | protocols to sweep; `http-get` = device download, `mqtt-windowed` = MQTT with 20 chunks in flight |
+| `--profiles` | nargs+ (names from `network_chaos.sh`) | `[mobile]` | profiles to run |
+| `--sizes` | comma list | every `data/*.bin` | payloads to transfer, e.g. `250kb,1mb` (fails fast on an unknown size) |
+| `--qos` | nargs+ int | `1 2` | MQTT QoS levels |
+| `--tls` | flag | off | TLS variant (HTTPS 8443 / MQTT 8883); only `http`, `http-get`, `mqtt`; generates `certs/` if missing |
+| `--repeat` | int | `1` | repetitions of every combination (thesis tables use 5) |
+| `--sweep-id` | str | `sweep-<timestamp>` when `--repeat > 1` | label shared by all runs of the sweep (`export_measurements.py --sweep-id`) |
+| `--seed` | int | random | seed for the per-repetition shuffle of the combination order |
+| `--run-id` | str | auto | explicit run id (must not already exist; not with `--repeat > 1`) |
 
-Per (protocol × profile) it: creates a run
-(`common/runs.new_run` → `output/runs/<timestamp>_<proto>_<profile>/`), sets
-`COMPOSE_FILE=docker-compose.automated.yaml`, `COMPOSE_PROFILES=<proto>`,
-`NETWORK_PROFILE=<profile>`, `RUN_ID`
+Per (protocol × profile [× repetition]) it: creates a run
+(`common/runs.new_run` → `output/runs/<timestamp>_<proto>_<profile>[_tls][_r<i>]/`),
+sets `COMPOSE_FILE=docker-compose.automated.yaml`, `COMPOSE_PROFILES=<proto>`,
+`NETWORK_PROFILE=<profile>`, `RUN_ID`, `TLS`, `MOSQUITTO_CONF`
 into the **process environment**, writes the `.active_run` marker, builds
-images, `docker compose up -d`, probes reachability, calls
+images, `docker compose up -d`, probes reachability, records provenance
+(git commit, image digests, client `pip freeze`) in `run.json`, calls
 `run_protocol(protocol)`, then `docker compose down -v` in a `finally`.
 
 Unsupported profile names exit 1 (from `network_chaos.sh`).
+
+Example — one profile batch of the thesis matrix:
+
+```bash
+python runner.py --protocols http http-get mqtt grpc amqp --profiles ltem --sizes 250kb,1mb,5mb --qos 1 --repeat 5 --sweep-id v2-ltem
+python runner.py --protocols coap lwm2m --profiles ltem --sizes 250kb,1mb --repeat 5 --sweep-id v2-ltem
+python scripts/export_measurements.py --sweep-id v2-ltem
+```
+
+---
+
+## 2b. `scripts/export_measurements.py` — Markdown tables
+
+```bash
+python scripts/export_measurements.py [--sweep-id ID [ID ...]]
+       [--runs-dir output/runs] [--protocols ...] [--profiles ...]
+       [-o output/measurements_export.md] [--comparison-output output/measurements_comparison.md]
+```
+
+- With `--sweep-id`: every run of those sweeps is aggregated; each comparison
+  cell shows `median [Q1–Q3] n=N S%` (success = verified transfers / attempts
+  from run.json), flagged † when n < 5 or success < 100 %.
+- Without it: newest complete run per protocol × profile (used for the legacy
+  runs: `--runs-dir output/runs-legacy-v1`).
+- TLS runs appear as separate columns (`http-get+tls`, `mqtt+tls`).
+
+## 2c. Tests
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest tests
+```
+
+Unit tests for the statistics helpers, the export's aggregation/selection logic
+and `runner.py --sizes`.
 
 ---
 
@@ -76,7 +120,7 @@ Full flag table in [charts.md](charts.md). Summary:
 - Selection: `--protocols`, `--metrics`, `--file-sizes`, `--qos`, `--mqtt-side`,
   `--no-client`, `--no-pcap`, `--no-overview`.
 - Styling: `--chart-type auto|line|bar`, `--agg mean|median|min|max`,
-  `--error none|minmax|std|q90`, `--x-scale auto|linear|log`,
+  `--error none|minmax|std|q90|iqr`, `--x-scale auto|linear|log`,
   `--y-scale linear|log`, `--dpi N`, `--figsize WxH`.
 
 Requires matplotlib (`pip install -r requirements-charts.txt`); exits with a
@@ -111,7 +155,8 @@ between machines for reproducibility; don't regenerate.
 |---|---|---|
 | `protocols.MQTT.clients.client_a` | `--file <name>` `--qos <1\|2>` | sender; both args required |
 | `protocols.MQTT.clients.client_b` | — | receiver; subscribes and runs forever |
-| `protocols.HTTP.client.http_client` | `--file <name>` | optional; default all `*.bin` |
+| `protocols.MQTT.clients.client_a` (windowed) | `--file <name>` `--qos <1\|2>` `--window <N>` | `--window 20` = protocol key `mqtt-windowed` |
+| `protocols.HTTP.client.http_client` | `--file <name>` `--mode put\|get` | `put` = key `http`, `get` = key `http-get`; default all `*.bin` |
 | `protocols.CoAP.client.coap_client` | `--file <name>` | optional; default all `*.bin` |
 | `protocols.AMQP.client.amqp_client` | `--file <name>` | sender; publisher confirms |
 | `protocols.GRPC.client.grpc_client` | `--file <name>` | client-streaming upload + Ping latency |
@@ -132,8 +177,15 @@ after a `--file` run they keep the container alive ~3 s, otherwise ~30 s.
 | `NETWORK_PROFILE` | network_chaos.sh, manifest | `iot` | which tc profile to apply (recorded per row + manifest) |
 | `APP_COMMAND` | network_chaos.sh | unset | command to run after tc (servers/receiver) |
 | `COMPOSE_FILE` / `COMPOSE_PROFILES` | runner.py | — | selects the automated stack + protocol |
-| `CPU_TDP_WATTS` | resource_monitor | `15.0` | TDP used in the energy estimate |
-| `MAX_RETRIES`-style | coap_client | `3` | app-level retry attempts (hard-coded constant, not env) |
+| `SHAPE_DST` | network_chaos.sh | unset | shape only egress to this host (MQTT/AMQP capture sidecars → `client-b`) |
+| `SHAPE_IFACE` | network_chaos.sh | `eth0` | interface to shape |
+| `TLS` | HTTP/MQTT clients + server, analyzer | `0` | `1` = TLS variant (set by `runner.py --tls`) |
+| `CERTS_DIR` | HTTP/MQTT clients + server | `/app/certs` | CA + server certificate location |
+| `MOSQUITTO_CONF` | compose (broker) | `mosquitto.conf` | `mosquitto-tls.conf` for MQTT over TLS |
+| `COAP_MAX_RETRIES` | coap_client | `3` (`1` on `nbiot`) | whole-file retry attempts |
+| `GRPC_MIN_THROUGHPUT_BPS` | grpc_client | `32000` (`16000` on `nbiot`) | floor used to scale the RPC deadline |
+| `HTTP_MAX_RETRY_ATTEMPTS` | http_client (GET) | `30` | reconnect attempts while resuming a download |
+| `HTTP_READ_TIMEOUT_S` | http_client (GET) | `120` | stalled-read timeout before a resume is attempted |
 
 ---
 

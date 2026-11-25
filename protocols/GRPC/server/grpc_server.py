@@ -137,13 +137,12 @@ class FileTransferServicer(pb_grpc.FileTransferServicer):
                     "side": "receiver",
                     "file_size": received_bytes / (1024 * 1024),
                     "sender_duration": "X",
-                    "receiver_duration": f"{receiver_duration:.2f}",
+                    "receiver_duration": f"{receiver_duration:.3f}",
                     "latency": "X",
                     "goodput_mbps": f"{(received_bytes * 8) / (receiver_duration * 1_000_000):.3f}",
                     "integrity_ok": integrity_ok,
                     "avg_cpu_usage": f"{resource_stats.get('avg_cpu_pct', 0):.2f}%",
                     "peak_ram_usage": f"{resource_stats.get('peak_rss_mb', 0):.2f} MB",
-                    "energy_est": f"{resource_stats.get('energy_j', 0):.4f}",
                     "sample_count": resource_stats.get("sample_count", ""),
                 }
             ]

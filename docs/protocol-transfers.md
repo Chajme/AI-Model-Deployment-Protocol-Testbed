@@ -29,11 +29,16 @@ metric. This page documents the client and server code for all six.
      inject up to 10 s into `sender_duration`.
   5. `send_chunks()` publishes every 1 MiB chunk with
      `msg_info.wait_for_publish(timeout=60)` per chunk — one publish round-trip
-     per chunk (this is why MQTT goodput is low for large files).
+     per chunk (this is why MQTT goodput is low for large files). An
+     unacknowledged chunk now aborts the transfer (non-zero exit, counted as a
+     failed attempt). With `--window N` (protocol key `mqtt-windowed`, N = 20)
+     up to N chunks stay in flight (`max_inflight_messages_set`) and all
+     acknowledgements are awaited at the end, which isolates the cost of the
+     per-chunk wait.
   6. Duration is wall-clock across the chunk publishes only — the timer starts
      once the metadata ACK has arrived;
      `goodput_mbps = file_size × 8 / (duration × 1e6)`.
-  7. Writes a `side=sender` row with CPU/RAM/energy from `ResourceMonitor`
+  7. Writes a `side=sender` row with CPU/RAM from `ResourceMonitor`
      (wrapping the metadata + chunk publish window).
 - CLI: `--file <name> --qos <1|2>` (both required); sleeps 5 s on startup for
   the broker.
@@ -50,7 +55,7 @@ metric. This page documents the client and server code for all six.
   `time.perf_counter() - metadata_arrival_time`.
 - On the final chunk: computes duration, verifies the received file's SHA-256
   against the metadata checksum, stops the monitor, and writes a `side=receiver`
-  row with `integrity_ok` plus the CPU/RAM/energy columns.
+  row with `integrity_ok` plus the CPU/RAM columns.
 - **Single-chunk transfers** (file ≤ 1 chunk) record `receiver_duration="X"`
   and `goodput_mbps="X"` — a single chunk spans no measurable arrival window
   (the old sub-millisecond windows produced fake 1500+ Mbps rows).
@@ -64,51 +69,96 @@ by default (`--side auto`).
 
 ---
 
-## HTTP — streaming PUT with server-side checksum
+## HTTP — streaming PUT upload (`http`) and device download (`http-get`)
+
+Both protocol keys use the same client module and server; `http-get` passes
+`--mode get` (see `RUNNERS` in `protocols/benchmark_manager.py`). With
+`TLS=1` both switch to HTTPS on port 8443 (see the TLS section below).
 
 ### Client: `protocols/HTTP/client/http_client.py`
 
-- Server: `http://http-server:8000` (Flask).
-- **Latency (TCP RTT)** — `measure_network_latency()` opens a bare TCP socket
-  to `http-server:8000`, times the connect, closes. No HTTP, no server
-  processing — a clean RTT.
-- **TTFB** — a `requests` response hook (`record_ttfb`) fires as soon as the
-  response headers arrive and records `elapsed from request_start`.
-- **Transfer** (`transfer_file`):
+- Server: `http://http-server:8000` (`https://http-server:8443` with `TLS=1`).
+- **Latency (TCP connect)** — `measure_network_latency()` opens a bare TCP
+  socket to the server, times the connect, closes. No HTTP, no server
+  processing. With TLS it also times the handshake on that socket and returns
+  it separately (`tls_handshake_s`).
+- **PUT upload** (`transfer_file`, key `http`):
   1. Streams the file with `requests.put(BASE_URL + "/upload/" + filename,
-     data=file_stream, headers={"X-Checksum": checksum}, hooks=...)`.
-     The file is streamed from disk (`open(..., "rb")` as the body), so memory
+     data=file_stream, headers={"X-Checksum": checksum}, hooks=...)`; memory
      stays flat regardless of file size.
   2. `integrity_ok = (put_response.status_code == 200)` — the *server* decided
-     checksum equality.
-  3. `ResourceMonitor(sample_interval=0.01)` wraps the transfer for CPU/RAM/energy.
-  4. Writes an HTTP row.
-- CLI: `--file <name>`; sleeps 5 s on startup.
+     checksum equality. TTFB comes from a `requests` response hook.
+  3. A failed upload still writes a row (`integrity_ok=False`) so success
+     rates are honest.
+- **GET download** (`download_file`, key `http-get`):
+  1. `GET /download/<file>` with `stream=True`, read in 16 KiB chunks, SHA-256
+     updated per chunk and compared with the source payload (the client
+     container mounts the same `data/`).
+  2. TTFB = time from request start to response headers.
+  3. On `ConnectionError` / `ChunkedEncodingError` / timeout the client
+     retries with `Range: bytes=<received>-` and requires `206`
+     (`HTTP_MAX_RETRY_ATTEMPTS`, default 30, 1 s apart; a refused connect
+     while the server restarts counts as a retry, not a resume). A stalled read
+     is treated as broken after `HTTP_READ_TIMEOUT_S` (default 120 s).
+  4. Writes an `http-get` row with `resumed` (number of 206 continuations) and
+     `bytes_resumed` (bytes received after a resume).
+- CLI: `--file <name> --mode put|get`; sleeps 5 s on startup.
 
 ### Server: `protocols/HTTP/server/flask_server.py`
 
-```python
-@app.route("/upload/<filename>", methods=["PUT"])
-def upload(filename):
-    actual = sha256(request.data)          # whole-body checksum
-    if expected != actual: return 400
-    save_file(filename, data=request.data)
-    return 200
-```
-
-- `request.data` buffers the full body in memory on the server (the client
-  streams, but the Flask dev server reads it whole — noted as a server-side RAM
-  cost for very large files).
+- Served by **gunicorn** (`gthread`, 2 workers × 4 threads, `--timeout 3600`),
+  not the Flask development server, for both the plain and the TLS variant,
+  so the two differ only in TLS. `python -m protocols.HTTP.server.flask_server`
+  execs gunicorn with the right bind/cert arguments.
+- `PUT /upload/<file>` reads `request.stream` in 64 KiB chunks, hashing as the
+  body arrives (no whole-body buffering), and returns 400 on a checksum
+  mismatch.
+- `GET /download/<file>` serves `data/<file>` with
+  `send_from_directory(..., conditional=True)`: Werkzeug answers `Range`
+  requests with `206 Partial Content`, which makes resume possible.
 - A legacy `protocols/HTTP/server/nginx.conf` (WebDAV PUT variant) exists but is
   **not** wired into the current compose files.
 
 ### Latency vs. goodput semantics
 
-- `latency_tcp_rtt` — connection-setup RTT (transport only).
-- `latency_ttfb` — time to first response byte (headers), includes server
-  processing of the uploaded body.
+- `latency_tcp_rtt` — TCP connect time (transport only).
+- `tls_handshake_s` — TLS handshake on top of that connection (TLS runs only).
+- `latency_ttfb` — time to first response byte (headers). For the PUT it
+  includes server processing of the uploaded body; for the GET it is the
+  request → first byte of the download.
 - `goodput_mbps` — `file_size × 8 / transfer_time` where transfer_time spans
-  request-start to response-end.
+  request-start to the last byte (GET) or response-end (PUT).
+
+---
+
+## TLS variant (`runner.py --tls`) — HTTPS and MQTT over TLS
+
+Implemented for `http`, `http-get` and `mqtt` (the minimum TLS set of the
+v2 plan); other protocols reject `--tls`.
+
+- **Certificates.** `scripts/gen_certs.sh` creates a self-signed test CA and one
+  server certificate (SAN `http-server`, `mosquitto-broker`) in `certs/`
+  (git-ignored). `runner.py --tls` runs it automatically in the pinned netshoot
+  image when `certs/ca.crt` is missing. The CA carries explicit
+  `basicConstraints`/`keyUsage`, because Python 3.13 verifies certificates
+  strictly.
+- **Switch.** `--tls` sets `TLS=1` for the stack and the harness, appends
+  `_tls` to the run id and records `"tls": true` in `run.json`.
+- **HTTP.** gunicorn binds `0.0.0.0:8443` with `server.crt/key`; the client
+  uses `https://http-server:8443` verified against `certs/ca.crt`.
+  `tls_handshake_s` = handshake time on a bare socket after the TCP connect.
+- **MQTT.** `MOSQUITTO_CONF=mosquitto-tls.conf` makes the broker listen on 8883
+  with the same certificate; both clients call `tls_set(ca_certs=...)`.
+  Sender rows record the publisher's handshake (server side, clean link);
+  receiver rows record the **device's** handshake over the constrained link,
+  measured once at `client-b` startup (one persistent connection, so TLS setup
+  is a per-connection cost, not a per-transfer one).
+- **pcap analysis.** The payload protocol is encrypted, so
+  `TLS_PROTOCOL_CONFIG` in `common/pcap_analyzer.py` selects frames by port
+  (`tcp.port == 8443` / `8883`) and the frame-type breakdown reports
+  `ENCRYPTED`.
+- Evidence: `output/evidence/tls-checks.txt` (ClientHello present, 0
+  plaintext `http`/`mqtt` frames, strict certificate verification OK).
 
 ---
 
@@ -155,6 +205,12 @@ subtlety: an ACK **echoes the request's MID**, so raw MID counting over-counts).
 ---
 
 ## AMQP — chunked publish over RabbitMQ with publisher confirms
+
+**Broker settings** (`protocols/AMQP/broker/rabbitmq.conf`, mounted into
+`/etc/rabbitmq/conf.d/`): `tcp_listen_options.send_timeout = 600000` and
+`heartbeat = 600`. Once the broker → device link is shaped, writing a 1 MB
+message to the receiver takes far longer than RabbitMQ's default 15 s write
+timeout, which reset the receiver's connection mid-transfer.
 
 ### Sender: `protocols/AMQP/client/amqp_client.py`
 
@@ -273,4 +329,4 @@ benchmark above.
 |---|---|
 | `common/integrity_checker.py` | `sha256(bytes)` and streaming `compute_sha256_file(path)` (1 MiB read chunks) |
 | `common/file_manager.py` | `DATA_DIR`/`OUTPUT_DIR` from env (defaults `./data`, `./output`); `load_binary_files()` sorted by size; `save_file()`; `get_file_path_input/output`; `output_directory_exists()` |
-| `common/resource_monitor.py` | CPU/RAM/energy sampler (see [metrics-schema.md](metrics-schema.md)) |
+| `common/resource_monitor.py` | CPU/RAM sampler (see [metrics-schema.md](metrics-schema.md)) |

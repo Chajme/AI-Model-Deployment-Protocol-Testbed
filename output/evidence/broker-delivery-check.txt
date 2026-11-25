@@ -1,0 +1,26 @@
+# Broker protocols on the shaped device link (Phase 1 verify item 5 / Phase 7), 2026-11-23
+# Profile iot (512 kbit/s per direction), payload 5 MB, MQTT QoS 1.
+
+| Run | Sender time (server -> broker, clean) | Device delivery | Delivery goodput | Integrity | Overhead (device leg) |
+|---|---|---|---|---|---|
+| 20261123T122848_mqtt_iot_r1          | 0.059 s | 88.653 s | 0.473 Mbit/s | True | 11.74 % |
+| 20261123T123056_mqtt-windowed_iot_r1 | 0.149 s | 87.434 s | 0.480 Mbit/s | True | 10.98 % |
+| 20261123T123652_amqp_iot_r1          | 0.054 s | 87.319 s | 0.480 Mbit/s | True | 11.05 % |
+
+- Delivery goodput stays below the 0.512 Mbit/s tbf rate: the device link is
+  shaped. Before the fix the MQTT receiver logged up to 1724 Mbit/s (FIXED-15).
+- Device-leg overhead is ~11 % instead of the ~115 % two-leg legacy figure.
+- mqtt-windowed ~= mqtt: with the publisher on the clean link, the per-chunk
+  ack wait no longer limits throughput; the device link does. The legacy MQTT
+  plateau (~0.16 Mbit/s) was largely a product of the legacy shaping.
+
+Problems found and fixed by these runs:
+1. The harness used to stop the capture and the stack as soon as the SENDER
+   exited. With an unshaped publisher that is ~0.06 s, long before the broker
+   finished delivering to the device, so no receiver row was written. The
+   harness now waits for the receiver's verified row (and fails fast if the
+   receiver container stops).
+2. RabbitMQ reset the receiver's connection mid-transfer: its default 15 s
+   socket send_timeout is far shorter than writing a 1 MB message over a
+   512 kbit/s link. protocols/AMQP/broker/rabbitmq.conf raises it to 600 s
+   (heartbeat 600 s).
